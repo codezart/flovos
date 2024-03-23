@@ -1,0 +1,5 @@
+tqdm
+tor
+chvision
+torch
+cv2
