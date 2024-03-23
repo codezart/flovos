@@ -22,8 +22,8 @@ import tqdm
 from PIL import Image
 
 ### My libs
-from davis import DAVIS_MO_Test
-from swiftnet import SwiftNet
+from dataset.davis import DAVIS_MO_Test
+from flovos import Flovos
 
 # from torch.autograd import Variable
 # from torch.utils import data
@@ -280,7 +280,7 @@ if __name__ == "__main__":
         single_object=(YEAR == 16),
         scale=480,
     )
-    model = nn.DataParallel(SwiftNet())
+    model = nn.DataParallel(Flovos())
     if torch.cuda.is_available():
         model.cuda()
     model.eval()

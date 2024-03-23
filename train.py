@@ -20,7 +20,7 @@ from dataset.youtube import Youtube_MO_Train
 # Custom Libs
 from dataset.davis import DAVIS_MO_Test  # this seems to be the most updated one so using it
 from eval import evaluate  # for test loading davis test
-from swiftnet import SwiftNet
+from flovos import Flovos
 
 # This flag allows you to enable the inbuilt cudnn auto-tuner to find the best algorithm to use for your hardware
 torch.backends.cudnn.benchmark = True
@@ -131,17 +131,17 @@ def main():
 
     logging.info("Acquired DAVIS test dataset")
     
-    # freeze all except the decoder module of SwiftNet
-    swiftnet = SwiftNet()
-    for param in swiftnet.parameters():
+    # freeze all except the decoder module of Flovos
+    flovos = Flovos()
+    for param in flovos.parameters():
         param.requires_grad = False
     
-    for param in swiftnet.Decoder.parameters():
+    for param in flovos.Decoder.parameters():
         print(type(param))
         param.requires_grad = True
 
     # initialize model with dataparallel for multi gpu processing
-    model = nn.DataParallel(swiftnet)
+    model = nn.DataParallel(flovos)
     logging.info("Loading weights: ", pth_path)
 
     # load the pretrained model
@@ -263,7 +263,7 @@ def main():
 
         Es[:, : num_objects + 1, 1] = F.softmax(
             n2_logit, dim=1
-        )  # swiftnet has num objects limited to 3. STM used full 11 objects (10 + 1 background)
+        )  # flovos has num objects limited to 3. STM used full 11 objects (10 + 1 background)
 
         # Take second frame output (mask) and second frame to model (memorize)
         n2_key, n2_value = model(Fs[:, :, 1], Es[:, :, 1], r4, r3, r2, c1, num_objects)
@@ -302,7 +302,7 @@ def main():
                 model.state_dict(),
                 os.path.join(
                     args.save,
-                    "swiftnet_davis_youtube_{}_{}.pth".format(
+                    "flovos_davis_youtube_{}_{}.pth".format(
                         args.backbone, str(iter_)
                     ),
                 ),

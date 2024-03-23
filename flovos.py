@@ -335,7 +335,7 @@ class ASPP(nn.Module):
         return F.dropout(F.relu(x, inplace=True), p=0.5, training=self.training)
 
 
-class SwiftNet(nn.Module):
+class Flovos(nn.Module):
     """
     The main network that integrates all the components mentioned above.
     It defines a process for memorizing key-value pairs from previous frames
@@ -345,7 +345,7 @@ class SwiftNet(nn.Module):
     """
 
     def __init__(self):
-        super(SwiftNet, self).__init__()
+        super(Flovos, self).__init__()
         self.LAE = LAE()
         self.Encoder = Encoder()
 
@@ -398,7 +398,7 @@ class SwiftNet(nn.Module):
         # em = torch.clamp(em, 1e-7, 1 - 1e-7)
         # logit = torch.log((em / (1 - em)))
 
-        # swiftnet
+        # Flovos
         num_objects, H, W = ps.shape
         bg_prob = torch.prod(1 - ps, dim=0).unsqueeze(0).unsqueeze(0)  # bg prob
         em = torch.cat([bg_prob, ps.unsqueeze(0)], dim=1)
@@ -484,10 +484,10 @@ class SwiftNet(nn.Module):
         return logit, r4, r3, r2, c1
 
     def forward(self, *args, **kwargs):
-        logging.info("SwiftNet: forward pass {}".format(len(args) + len(kwargs)))
+        logging.info("Flovos: forward pass {}".format(len(args) + len(kwargs)))
         if len(args) + len(kwargs) <= 4:
-            logging.info("SwiftNet-forward: entering segment function")
+            logging.info("Flovos-forward: entering segment function")
             return self.segment(*args, **kwargs)
         else:
-            logging.info("SwiftNet-forward: entering memorize function")
+            logging.info("Flovos-forward: entering memorize function")
             return self.memorize(*args, **kwargs)
