@@ -5,6 +5,7 @@ import argparse
 import logging
 import os
 import random
+import numpy as np
 from datetime import datetime
 
 import torch
@@ -22,9 +23,11 @@ from dataset.davis import DAVIS_MO_Test  # this seems to be the most updated one
 from eval import evaluate  # for test loading davis test
 from flovos import Flovos
 
+from raft.raft import RAFT
+
 # This flag allows you to enable the inbuilt cudnn auto-tuner to find the best algorithm to use for your hardware
 torch.backends.cudnn.benchmark = True
-
+DEVICE = "cuda"
 
 def get_arguments():
     """This function gets all the arguments from the python command"""
@@ -69,8 +72,18 @@ def get_arguments():
         default="resnet50",
     )
 
+    # raft arguments
+    parser.add_argument("-raftmodel", type=str, default="./raft/models/")
+    parser.add_argument("--raftsmall", action="store_true", help="use small model")
+    parser.add_argument(
+        "-mixed_precision", action="store_true", help="use mixed precision"
+    )
     return parser.parse_args()
 
+def load_raft_image(imfile):
+    img = np.array(Image.open(imfile))
+    img = torch.from_numpy(img).permute(2, 0, 1).float()
+    return img[None].to(DEVICE)
 
 def adjust_learning_rate(iteration, total_iter, power=0.9):
     return 1e-5 * pow((1 - 1.0 * iteration / total_iter), power)
@@ -137,25 +150,34 @@ def main():
         param.requires_grad = False
     
     for param in flovos.Decoder.parameters():
-        print(type(param))
         param.requires_grad = True
 
     # initialize model with dataparallel for multi gpu processing
     model = nn.DataParallel(flovos)
-    logging.info("Loading weights: ", pth_path)
+    logging.info(f"Loading weights: {pth_path}")
 
     # load the pretrained model
     model.load_state_dict(torch.load(pth_path), strict=False)
 
     logging.info("loaded pretrain model {}".format(pth_path))
 
+    ## ** RAFT Implementation ** ##
+    
+    raft = torch.nn.DataParallel(RAFT(args))
+    raft.load_state_dict(torch.load(args.raftmodel))
+    raft = raft.module
+    
+    logging.info("loaded pretrain raft model {}".format(pth_path))
+
     # make model cuda if cuda available
     if torch.cuda.is_available():
         model.cuda()  # moves model's parameters and buffers to the GPU
+        raft.to(DEVICE)
         print("CUDA set")
 
     # set model to training mode
     model.train()
+    raft.eval()
 
     # set batchNorm layers to evaluation mode
     for module in model.modules():
@@ -238,10 +260,15 @@ def main():
                 Es.size(), Es[:, :, 0].size()
             )
         )
-        ## ** RAFT Implementation ** ##
         
-        ## ** RAFT Implementation ** ##
-        
+        # Run RAFT
+        Fs0 = Fs[:, :, 0]
+        Fs1 = Fs[:, :, 1]
+        Fs2 = Fs[:, :, 2]
+        _, flow_up_0 = raft(Fs0,Fs1, iters=20, test_mode=True)
+        _, flow_up_1 = raft(Fs1,Fs2, iters=20, test_mode=True)
+        # end RAFT run
+
         # Start training with first frame (memorize module)
         n1_key, n1_value = model(
             Fs[:, :, 0],
@@ -254,7 +281,7 @@ def main():
             first_frame_flag=True,
         )
 
-        # apply 2nd frame to model to segment to generate mask for frame 2
+        # apply 2nd frame to model to segment to generate mask for frame 2 (segment)
         n2_logit, r4, r3, r2, c1 = model(
             Fs[:, :, 1], n1_key, n1_value, torch.tensor([num_objects])
         )

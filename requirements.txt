@@ -3,3 +3,4 @@ tor
 chvision
 torch
 cv2
+update

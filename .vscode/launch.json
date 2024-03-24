@@ -1,0 +1,13 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "Python Debugger: Current File",
+			"type": "debugpy",
+			"request": "launch",
+			"program": "${file}",
+			"console": "integratedTerminal",
+			"args":["-Ddavis", "~/Downloads/DAVIS/", "-Dyoutube", "~/Downloads/YOUTUBEVOS/", "-backbone", "resnet50", "-save", "./davis_weights/", "-resume", "~/Downloads/swiftnet_davis_1_04_M_2400000.pth"]
+		}
+	]
+}
