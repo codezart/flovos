@@ -113,6 +113,16 @@ class DAVIS_MO_Train(data.Dataset):
             + (3,),
             dtype=np.float32,
         )
+        raftN_frames = np.empty(
+            (3,)
+            + (
+                384,
+                384,
+            )
+            + (3,),
+            dtype=np.float32,
+        )
+
         N_masks = np.empty(
             (3,)
             + (
@@ -160,7 +170,7 @@ class DAVIS_MO_Train(data.Dataset):
             masks_[f], num_object, ob_list = self.mask_process(
                 masks_[f], f, num_object, ob_list
             )
-            N_frames[f], N_masks[f] = frames_[f], masks_[f]
+            N_frames[f], N_masks[f], raftN_frames[f] = frames_[f], masks_[f], raft_frames_[f]
 
         Fs = torch.from_numpy(
             np.transpose(N_frames.copy(), (3, 0, 1, 2)).copy() # (3, 0, 1, 2): color channels, num_frames, height, width
