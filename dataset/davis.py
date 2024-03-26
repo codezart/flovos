@@ -180,7 +180,7 @@ class DAVIS_MO_Train(data.Dataset):
         if num_object == 0:
             num_object += 1
         num_objects = torch.LongTensor([num_object])
-        return Fs, Ms, num_objects, info, raft_frames_
+        return Fs, Ms, num_objects, info, raftN_frames
 
 
 class DAVIS_MO_Test(data.Dataset):
