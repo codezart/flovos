@@ -122,6 +122,7 @@ class DAVIS_MO_Train(data.Dataset):
             dtype=np.uint8,
         )
         frames_ = []
+        raft_frames_ = []
         masks_ = []
         n1 = random.sample(range(0, self.num_frames[video] - 2), 1)[0]
         n2 = random.sample(
@@ -139,6 +140,9 @@ class DAVIS_MO_Train(data.Dataset):
                 self.image_dir, video, "{:05d}.jpg".format(frame_list[f])
             )
             tmp_frame = np.array(Image.open(img_file).convert("RGB"))
+            tmp_raft_frame = torch.from_numpy(tmp_frame).permute(2, 0, 1).float()
+            tmp_raft_frame = tmp_raft_frame[None]
+            
             try:
                 mask_file = os.path.join(
                     self.mask_dir, video, "{:05d}.png".format(frame_list[f])
@@ -148,6 +152,7 @@ class DAVIS_MO_Train(data.Dataset):
                 tmp_mask = 255
 
             frames_.append(tmp_frame.astype(np.float32))
+            raft_frames_.append(tmp_raft_frame)
             masks_.append(tmp_mask)
         frames_, masks_ = self.aug(frames_, masks_)
 
@@ -158,14 +163,14 @@ class DAVIS_MO_Train(data.Dataset):
             N_frames[f], N_masks[f] = frames_[f], masks_[f]
 
         Fs = torch.from_numpy(
-            np.transpose(N_frames.copy(), (3, 0, 1, 2)).copy()
+            np.transpose(N_frames.copy(), (3, 0, 1, 2)).copy() # (3, 0, 1, 2): color channels, num_frames, height, width
         ).float()
         Ms = torch.from_numpy(self.All_to_onehot(N_masks).copy()).float()
 
         if num_object == 0:
             num_object += 1
         num_objects = torch.LongTensor([num_object])
-        return Fs, Ms, num_objects, info
+        return Fs, Ms, num_objects, info, raft_frames_
 
 
 class DAVIS_MO_Test(data.Dataset):
