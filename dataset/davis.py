@@ -175,12 +175,15 @@ class DAVIS_MO_Train(data.Dataset):
         Fs = torch.from_numpy(
             np.transpose(N_frames.copy(), (3, 0, 1, 2)).copy() # (3, 0, 1, 2): color channels, num_frames, height, width
         ).float()
+        raftFs = torch.from_numpy(
+            raftN_frames.copy() # (3, 0, 1, 2): color channels, num_frames, height, width
+        ).float()
         Ms = torch.from_numpy(self.All_to_onehot(N_masks).copy()).float()
 
         if num_object == 0:
             num_object += 1
         num_objects = torch.LongTensor([num_object])
-        return Fs, Ms, num_objects, info, raftN_frames
+        return Fs, Ms, num_objects, info, raftFs
 
 
 class DAVIS_MO_Test(data.Dataset):
