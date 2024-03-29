@@ -52,7 +52,7 @@ def get_arguments():
         "-max_skip", type=int, help="max skip between training frames", default=25
     )
     parser.add_argument(
-        "-change_skip_step", type=int, help="change max skip per x iter", default=3000
+        "-change_skip_step", type=int, help="change max skip per x iter", default=500
     )
     parser.add_argument("-total_iter", type=int, help="total iter num", default=800000)
     parser.add_argument(
@@ -325,7 +325,7 @@ def main():
             )
             loss_momentum = 0
 
-        if (iter_ + 1) % save_step == 0 and (iter_ + 1) >= 200:
+        if (iter_ + 1) % save_step == 0 and (iter_ + 1) >= 500:
             if not os.path.exists(args.save):
                 os.makedirs(args.save)
             torch.save(
