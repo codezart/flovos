@@ -341,7 +341,7 @@ def main():
             model.eval()
 
             print("Evaluate at iter: " + str(iter_))
-            g_res = evaluate(model, davis_testloader, ["J", "F"], 0)
+            g_res = evaluate(model, raft, davis_testloader, ["J", "F"], 0)
 
             if g_res[0] > max_jf:
                 max_jf = g_res[0]
