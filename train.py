@@ -56,7 +56,7 @@ def get_arguments():
     )
     parser.add_argument("-total_iter", type=int, help="total iter num", default=800000)
     parser.add_argument(
-        "-test_iter", type=int, help="evaluate per x iters", default=200
+        "-test_iter", type=int, help="evaluate per x iters", default=3000
     )
     parser.add_argument("-log_iter", type=int, help="log per x iters", default=500)
     parser.add_argument(
@@ -325,7 +325,7 @@ def main():
             )
             loss_momentum = 0
 
-        if (iter_ + 1) % save_step == 0 and (iter_ + 1) >= 500:
+        if (iter_ + 1) % save_step == 0 and (iter_ + 1) >= 3000:
             if not os.path.exists(args.save):
                 os.makedirs(args.save)
             torch.save(
