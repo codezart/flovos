@@ -125,7 +125,9 @@ class Youtube_MO_Train(data.Dataset):
             ),
             dtype=np.uint8,
         )
+
         frames_ = []
+        raft_frames_ = [] #raft
         masks_ = []
         # select first frame randomly from 0 to 3rd last
         n1 = random.sample(range(0, self.num_frames[video] - 2), 1)[0]
@@ -145,6 +147,9 @@ class Youtube_MO_Train(data.Dataset):
         for f in range(3):
             img_file = img_files[frame_list[f]]
             tmp_frame = np.array(Image.open(img_file).convert("RGB"))
+            tmp_raft_frame = torch.from_numpy(tmp_frame).permute(2, 0, 1).float() #raft
+            tmp_raft_frame = tmp_raft_frame[None] #raft
+
             try:
                 mask_file = mask_files[frame_list[f]]
                 tmp_mask = np.array(Image.open(mask_file).convert("P"), dtype=np.uint8)
@@ -168,6 +173,7 @@ class Youtube_MO_Train(data.Dataset):
                 )
 
             frames_.append(tmp_frame)
+            raft_frames_.append(tmp_raft_frame) #raft
             masks_.append(np.array(tmp_mask))
 
         # Load, resize, and augment selected frames and masks
@@ -177,20 +183,27 @@ class Youtube_MO_Train(data.Dataset):
             masks_[f], num_object, ob_list = self.mask_process(
                 masks_[f], f, num_object, ob_list
             )
-            N_frames[f], N_masks[f] = frames_[f], masks_[f]
+            N_frames[f], N_masks[f] = frames_[f], masks_[f] 
 
         # process masksa and prepare tensors for model input
         Fs = torch.from_numpy(
             np.transpose(N_frames.copy(), (3, 0, 1, 2)).copy()
         ).float()
         Ms = torch.from_numpy(self.All_to_onehot(N_masks).copy()).float()
+        
+        # raft
+        # raftFs = torch.from_numpy(
+        #     raft_frames_.copy() # (3, 0, 1, 2): color channels, num_frames, height, width
+        # ).float() #raft
+        
 
         if num_object == 0:
             num_object += 1
 
         # Ensure there is at least one object
         num_objects = torch.LongTensor([num_object])
-        return Fs, Ms, num_objects, info
+        
+        return Fs, Ms, num_objects, info, raft_frames_
 
 
 class YOUTUBE_MO_Test(data.Dataset):

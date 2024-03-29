@@ -10,11 +10,10 @@ import torch
 import torchvision
 from PIL import Image
 from torch.utils import data
-
 from dataset.aug import aug_heavy
 
 MAX_OBJECT_NUM_PER_SAMPLE = 5
-
+DEVICE = "cuda"
 
 class DAVIS_MO_Train(data.Dataset):
     # for multi object, do shuffling
@@ -113,16 +112,6 @@ class DAVIS_MO_Train(data.Dataset):
             + (3,),
             dtype=np.float32,
         )
-        raftN_frames = np.empty(
-            (3,)
-            + (
-                384,
-                384,
-            )
-            + (3,),
-            dtype=np.float32,
-        )
-
         N_masks = np.empty(
             (3,)
             + (
@@ -132,7 +121,7 @@ class DAVIS_MO_Train(data.Dataset):
             dtype=np.uint8,
         )
         frames_ = []
-        raft_frames_ = []
+        raft_frames_ = [] #raft
         masks_ = []
         n1 = random.sample(range(0, self.num_frames[video] - 2), 1)[0]
         n2 = random.sample(
@@ -150,8 +139,8 @@ class DAVIS_MO_Train(data.Dataset):
                 self.image_dir, video, "{:05d}.jpg".format(frame_list[f])
             )
             tmp_frame = np.array(Image.open(img_file).convert("RGB"))
-            tmp_raft_frame = torch.from_numpy(tmp_frame).permute(2, 0, 1).float()
-            tmp_raft_frame = tmp_raft_frame[None]
+            tmp_raft_frame = torch.from_numpy(tmp_frame).permute(2, 0, 1).float() #raft
+            tmp_raft_frame = tmp_raft_frame[None] #raft
             
             try:
                 mask_file = os.path.join(
@@ -162,7 +151,7 @@ class DAVIS_MO_Train(data.Dataset):
                 tmp_mask = 255
 
             frames_.append(tmp_frame.astype(np.float32))
-            raft_frames_.append(tmp_raft_frame)
+            raft_frames_.append(tmp_raft_frame) #raft
             masks_.append(tmp_mask)
         frames_, masks_ = self.aug(frames_, masks_)
 
@@ -170,20 +159,26 @@ class DAVIS_MO_Train(data.Dataset):
             masks_[f], num_object, ob_list = self.mask_process(
                 masks_[f], f, num_object, ob_list
             )
-            N_frames[f], N_masks[f], raftN_frames[f] = frames_[f], masks_[f], raft_frames_[f]
+            N_frames[f], N_masks[f] = frames_[f], masks_[f] #raft TODO may no need this line
 
         Fs = torch.from_numpy(
             np.transpose(N_frames.copy(), (3, 0, 1, 2)).copy() # (3, 0, 1, 2): color channels, num_frames, height, width
         ).float()
-        raftFs = torch.from_numpy(
-            raftN_frames.copy() # (3, 0, 1, 2): color channels, num_frames, height, width
-        ).float()
         Ms = torch.from_numpy(self.All_to_onehot(N_masks).copy()).float()
-
+        
+        # raft
+        # raftFs = torch.from_numpy(
+        #     raft_frames_.copy() # (3, 0, 1, 2): color channels, num_frames, height, width
+        # ).float() #raft
+        # raftFs = torch.FloatTensor(np.asarray(raft_frames_, dtype=np.float32))
+        
         if num_object == 0:
             num_object += 1
         num_objects = torch.LongTensor([num_object])
-        return Fs, Ms, num_objects, info, raftFs
+
+        
+        
+        return Fs, Ms, num_objects, info, raft_frames_
 
 
 class DAVIS_MO_Test(data.Dataset):
@@ -301,6 +296,8 @@ class DAVIS_MO_Test(data.Dataset):
         N_frames[0] = cv2.resize(
             np.array(Image.open(img_file).convert("RGB")) / 255.0, (w_, h_)
         )
+        raft_frames = torch.from_numpy(N_frames[0]).permute(2, 0, 1).float()
+        raft_frames = raft_frames[None]
         try:
             mask_file = os.path.join(self.mask_dir, video, "{:05d}.png".format(f))
             N_masks[0] = cv2.resize(
@@ -313,17 +310,19 @@ class DAVIS_MO_Test(data.Dataset):
         Fs = torch.from_numpy(
             np.transpose(N_frames.copy(), (3, 0, 1, 2)).copy()
         ).float()
+        # raft
+        raftFs = raft_frames
         if self.single_object:
             N_masks = (N_masks > 0.5).astype(np.uint8) * (N_masks < 255).astype(
                 np.uint8
             )
             Ms = torch.from_numpy(self.All_to_onehot(N_masks).copy()).float()
             num_objects = torch.LongTensor([int(1)])
-            return Fs, Ms
+            return Fs, Ms, raftFs
         else:
             Ms = torch.from_numpy(self.All_to_onehot(N_masks).copy()).float()
             num_objects = torch.LongTensor([int(self.num_objects[video])])
-            return Fs, Ms
+            return Fs, Ms, raftFs
 
 
 if __name__ == "__main__":

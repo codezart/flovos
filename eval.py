@@ -20,11 +20,15 @@ import tqdm
 # import cv2
 # import matplotlib.pyplot as plt
 from PIL import Image
+from torchvision import transforms
+import torchvision.transforms.functional as TF
+from torchvision.transforms.functional import to_pil_image, to_tensor
 
 ### My libs
 from dataset.davis import DAVIS_MO_Test
 from flovos import Flovos
-
+from raft.raft import RAFT
+from raft.utils.utils import InputPadder
 # from torch.autograd import Variable
 # from torch.utils import data
 
@@ -34,6 +38,7 @@ from flovos import Flovos
 
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
+DEVICE = "cuda"
 
 from evaldavis2017.davis2017 import utils
 
@@ -50,6 +55,7 @@ def Run_video(
     num_frames,
     num_objects,
     model,
+    raft,
     scale,
     Mem_every=None,
     Mem_number=None,
@@ -63,7 +69,7 @@ def Run_video(
         ]
     else:
         raise NotImplementedError
-    F_last, M_last = dataset.load_single_image(video, 0)
+    F_last, M_last, raftFs_last = dataset.load_single_image(video, 0)
     F_last = F_last.unsqueeze(0)
     M_last = M_last.unsqueeze(0)
     E_last = M_last
@@ -103,7 +109,17 @@ def Run_video(
             this_keys = torch.cat([keys, prev_key], dim=2)
             this_values = torch.cat([values, prev_value], dim=2)
 
-        F_, M_ = dataset.load_single_image(video, t)
+        F_, M_, raftFs_ = dataset.load_single_image(video, t)
+
+        raftFs_last = torch.FloatTensor(np.asarray(raftFs_last, dtype=np.float32))
+        raftFs_ = torch.FloatTensor(np.asarray(raftFs_, dtype=np.float32))
+        Fs0 = raftFs_last[0].unsqueeze(0).to(DEVICE)
+        Fs1 = raftFs_[0].unsqueeze(0).to(DEVICE)
+        padder = InputPadder(Fs0.shape)
+        Fs0, Fs1 = padder.pad(Fs0, Fs1)
+
+
+        _, flow_up_0 = raft(Fs0,Fs1, iters=20, test_mode=True)
 
         F_ = F_.unsqueeze(0)
         M_ = M_.unsqueeze(0)
@@ -111,7 +127,7 @@ def Run_video(
         # segment
         with torch.no_grad():
             logit, r4, r3, r2, c1 = model(
-                F_[:, :, 0], this_keys, this_values, torch.tensor([num_objects])
+                F_[:, :, 0], this_keys, this_values, torch.tensor([num_objects]), flow_up_0
             )
         E = F.softmax(logit, dim=1)
         del logit
@@ -164,7 +180,7 @@ def save(pred, save, palette):
         img_E.save(os.path.join(save, "{:05d}.png".format(i)))
 
 
-def evaluate(model, Testloader, metric, scale):
+def evaluate(model, raft, Testloader, metric, scale):
     # Containers
     metrics_res = {}
     if "J" in metric:
@@ -183,6 +199,7 @@ def evaluate(model, Testloader, metric, scale):
             num_frames,
             num_objects,
             model,
+            raft,
             scale,
             Mem_every=5,
             Mem_number=None,
@@ -259,6 +276,12 @@ if __name__ == "__main__":
         parser.add_argument(
             "-modelpth", type=str, help="pretrained model path", required=True
         )
+        parser.add_argument("-raftmodel", type=str, default="./raft/models/")
+        parser.add_argument("--raftsmall", action="store_true", help="use small model")
+        parser.add_argument(
+            "-mixed_precision", action="store_true", help="use mixed precision"
+        )
+
         return parser.parse_args()
 
     args = get_arguments()
@@ -281,14 +304,22 @@ if __name__ == "__main__":
         scale=480,
     )
     model = nn.DataParallel(Flovos())
+    
+    raft = torch.nn.DataParallel(RAFT(args))
+    raft.load_state_dict(torch.load(args.raftmodel))
+    raft = raft.module
+
     if torch.cuda.is_available():
         model.cuda()
-    model.eval()
+        raft.to(DEVICE)
 
+    model.eval()
+    raft.eval()
+    
     pth_path = model_pth
     state_dict = torch.load(pth_path)
     # new_state_dict = {k.replace("", ""): v for k, v in state_dict.items()}
     model.load_state_dict(state_dict, strict=False)
 
     metric = ["J", "F"]
-    evaluate(model, Testloader, metric, 0)
+    evaluate(model,raft, Testloader, metric, 0)

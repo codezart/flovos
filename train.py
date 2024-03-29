@@ -14,6 +14,7 @@ import torch.nn.functional as F
 import tqdm
 from PIL import Image
 from torch.utils import data
+from torchvision import transforms
 
 from dataset.davis import DAVIS_MO_Train
 from dataset.youtube import Youtube_MO_Train
@@ -227,18 +228,18 @@ def main():
         if random.random() < rate:
             try:
                 logging.info("Getting DAVIS data Fs Ms etc")
-                Fs, Ms, num_objects, info = next(davis_trainloader_iter)
+                Fs, Ms, num_objects, info, raftFs = next(davis_trainloader_iter)
             except:
                 davis_trainloader_iter = iter(davis_trainloader)
-                Fs, Ms, num_objects, info = next(davis_trainloader_iter)
+                Fs, Ms, num_objects, info, raftFs = next(davis_trainloader_iter)
                 logging.info("Getting next failed, restarting with iter")
         else:
             try:
                 logging.info("Getting Youtube data Fs Ms etc")
-                Fs, Ms, num_objects, info = next(youtube_trainloader_iter)
+                Fs, Ms, num_objects, info, raftFs = next(youtube_trainloader_iter)
             except:
                 youtube_trainloader_iter = iter(youtube_trainloader)
-                Fs, Ms, num_objects, info = next(youtube_trainloader_iter)
+                Fs, Ms, num_objects, info, raftFs = next(youtube_trainloader_iter)
                 logging.info("Getting next failed, restarting with iter")
 
         logging.info(
@@ -262,9 +263,11 @@ def main():
         )
         
         # Run RAFT
-        Fs0 = Fs[:, :, 0]
-        Fs1 = Fs[:, :, 1]
-        Fs2 = Fs[:, :, 2]
+        raftFs = torch.FloatTensor(np.asarray(raftFs, dtype=np.float32))
+        Fs0 = transforms.Resize((384, 384))(raftFs[0,0]).to(DEVICE)
+        Fs1 = transforms.Resize((384, 384))(raftFs[1,0]).to(DEVICE)
+        Fs2 = transforms.Resize((384, 384))(raftFs[2,0]).to(DEVICE)
+
         _, flow_up_0 = raft(Fs0,Fs1, iters=20, test_mode=True)
         _, flow_up_1 = raft(Fs1,Fs2, iters=20, test_mode=True)
         # end RAFT run
@@ -281,9 +284,9 @@ def main():
             first_frame_flag=True,
         )
 
-        # apply 2nd frame to model to segment to generate mask for frame 2 (segment)
+        # apply 2ndframe to model to segment to generate mask for frame 2 (segment)
         n2_logit, r4, r3, r2, c1 = model(
-            Fs[:, :, 1], n1_key, n1_value, torch.tensor([num_objects])
+            Fs[:, :, 1], n1_key, n1_value, torch.tensor([num_objects]), flow_up_0
         )
         n2_label = torch.argmax(Ms[:, :, 1], dim=1).long().cuda()
         n2_loss = criterion(n2_logit, n2_label)
@@ -298,7 +301,7 @@ def main():
         n12_values = torch.cat([n1_value, n2_value], dim=2)
 
         # Apply third frame as input for segment to generate third frame mask output 
-        n3_logit, r4, r3, r2, c1 = model(Fs[:, :, 2], n12_keys, n12_values, num_objects)
+        n3_logit, r4, r3, r2, c1 = model(Fs[:, :, 2], n12_keys, n12_values, num_objects, flow_up_1)
 
         n3_label = torch.argmax(Ms[:, :, 2], dim=1).long().cuda()
         n3_loss = criterion(n3_logit, n3_label)
