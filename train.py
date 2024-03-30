@@ -58,6 +58,9 @@ def get_arguments():
     parser.add_argument(
         "-test_iter", type=int, help="evaluate per x iters", default=3000
     )
+    parser.add_argument(
+        "-start_iter", type=int, help="start iter from", default=0
+    )
     parser.add_argument("-log_iter", type=int, help="log per x iters", default=500)
     parser.add_argument(
         "-resume_path",
@@ -100,6 +103,7 @@ def main():
     total_iter = args.total_iter
     accumulation_step = args.batch
     save_step = args.test_iter
+    start_iter = args.start_iter
     log_iter = args.log_iter
     change_skip_step = args.change_skip_step
 
@@ -203,7 +207,7 @@ def main():
     max_jf = 0
 
     # train model total_iter
-    for iter_ in tqdm.tqdm(range(total_iter)):
+    for iter_ in tqdm.tqdm(range(start_iter,total_iter)):
         # print(iter_)
         # adjust learning rate every 1000 iterations
         if (iter_ + 1) % 1000 == 0:
