@@ -346,8 +346,8 @@ def main():
                 model.state_dict(),
                 os.path.join(
                     args.save,
-                    "flovos_davis_youtube_{}_{}.pth".format(
-                        args.backbone, str(iter_)
+                    "flovos_davis_youtube_{}_{}_{}.pth".format(
+                        method_type, args.backbone, str(iter_)
                     ),
                 ),
             )
