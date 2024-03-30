@@ -325,7 +325,7 @@ def main():
             )
             loss_momentum = 0
 
-        if (iter_ + 1) % save_step == 0 and (iter_ + 1) >= 3000:
+        if (iter_ + 1) % save_step == 0 and (iter_ + 1) >= save_step:
             if not os.path.exists(args.save):
                 os.makedirs(args.save)
             torch.save(
