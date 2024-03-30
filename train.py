@@ -82,6 +82,8 @@ def get_arguments():
     parser.add_argument(
         "-mixed_precision", action="store_true", help="use mixed precision"
     )
+    parser.add_argument("-methodtype", type=str, default="flovos_generic")
+
     return parser.parse_args()
 
 def load_raft_image(imfile):
@@ -106,6 +108,14 @@ def main():
     start_iter = args.start_iter
     log_iter = args.log_iter
     change_skip_step = args.change_skip_step
+    method_type = args.methodtype
+    
+    logging.basicConfig(
+        filename="./logs/train_{}{}.log".format(method_type,now.strftime("_%Y_%m_%d_%H_%M_%S")),
+        filemode="a",
+        level=logging.DEBUG,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+    )
 
     logging.info("Saved all arguments")
 
@@ -364,10 +374,4 @@ def main():
 
 if __name__ == "__main__":
     now = datetime.now()
-    logging.basicConfig(
-        filename="./logs/train{}.log".format(now.strftime("_%Y_%m_%d_%H_%M_%S")),
-        filemode="a",
-        level=logging.DEBUG,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-    )
     main()
