@@ -247,28 +247,19 @@ class Memory(nn.Module):
 
     def __init__(self):
         super(Memory, self).__init__()
-        self.reduce_dim = nn.Conv2d(512, 32, kernel_size=1)  # Reduce channel dimension
+        
 
 
-    def forward(self, m_in, m_out, q_in, q_out, flow_frame):  # m_in: o,c,t,h,w
-        # Process flow_frame to have the same channel depth as q_in
-        flow_frame_reduced = self.reduce_dim(flow_frame)
-        # flow_processed = self.flow_integration(flow_frame)
-        # # Ensure spatial dimensions of flow_processed match those of q_in
-        # flow_processed = F.interpolate(flow_processed, size=q_in.shape[-2:], mode='bilinear', align_corners=False)
-
-        # Integrate flow information with q_in. Here we simply add them, but other methods (concatenation, attention) are also viable
-        q_in_with_flow = q_in + flow_frame_reduced
+    def forward(self, m_in, m_out, q_in, q_out):  # m_in: o,c,t,h,w
+ 
 
         B, D_e, N = m_in.size()
         _, D_o, H, W = q_out.size()
 
         mi = m_in.view(B, D_e, N)
         mi = torch.transpose(mi, 1, 2)
-        # Use q_in_with_flow instead of the original q_in for memory matching
-        qi = q_in_with_flow.view(B, D_e, H * W)
 
-        # qi = q_in.view(B, D_e, H * W)
+        qi = q_in.view(B, D_e, H * W)
 
         p = torch.bmm(mi, qi)
         p = p / math.sqrt(D_e)
@@ -359,54 +350,30 @@ class ASPP(nn.Module):
         x = self.conv1(x)
         return F.dropout(F.relu(x, inplace=True), p=0.5, training=self.training)
 
-# class OpticalFlowProcessor(nn.Module):
-#     def __init__(self):
-#         super(OpticalFlowProcessor, self).__init__()
-#         self.conv1 = nn.Conv2d(2, 64, kernel_size=7, stride=2, padding=3, bias=False)
-#         self.bn1 = nn.BatchNorm2d(64)
-#         self.relu = nn.ReLU(inplace=True)
-#         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 
-#         self.layer1 = self._make_layer(64, 64, blocks=3)
-#         self.layer2 = self._make_layer(64, 128, blocks=4, stride=2)
-#         self.layer3 = self._make_layer(128, 256, blocks=6, stride=2)
-#         self.layer4 = self._make_layer(256, 512, blocks=3, stride=2)
+class FlowProcessor(nn.Module):
+    def __init__(self):
+        super(FlowProcessor, self).__init__()
+        self.conv = nn.Conv2d(2, 1024, kernel_size=3, stride=16, padding=1)
+    
+    def forward(self, flow):
+        return self.conv(flow)
 
-#         self.to(torch.device('cuda'))
-
-
-#     def _make_layer(self, in_planes, planes, blocks, stride=1):
-#         layers = []
-#         layers.append(nn.Conv2d(in_planes, planes, kernel_size=1, stride=1, bias=False))
-#         layers.append(nn.BatchNorm2d(planes))
-#         layers.append(nn.ReLU(inplace=True))
-#         layers.append(nn.Conv2d(planes, planes, kernel_size=3, stride=stride, padding=1, bias=False))
-#         layers.append(nn.BatchNorm2d(planes))
-#         layers.append(nn.ReLU(inplace=True))
-#         layers.append(nn.Conv2d(planes, planes * 4, kernel_size=1, stride=1, bias=False))  # Adjusted number of output channels
-#         layers.append(nn.BatchNorm2d(planes * 4))
-        
-#         downsample = None
-#         if stride != 1 or in_planes != planes * 4:
-#             downsample = nn.Sequential(
-#                 nn.Conv2d(in_planes, planes * 4, kernel_size=1, stride=stride, bias=False),
-#                 nn.BatchNorm2d(planes * 4)
-#             )
-        
-#         layers.append(downsample)
-#         return nn.Sequential(*layers)
-
-#     def forward(self, x):
-        
-#         x = self.relu(self.bn1(self.conv1(x)))
-#         x = self.maxpool(x)
-
-#         x = self.layer1(x)
-#         x = self.layer2(x)
-#         x = self.layer3(x)
-#         x = self.layer4(x)
-
-#         return x
+class FeatureAttention(nn.Module):
+    def __init__(self):
+        super(FeatureAttention, self).__init__()
+        self.attention_layer = nn.Sequential(
+            nn.Conv2d(1024 * 2, 1024, kernel_size=1, stride=1),
+            nn.ReLU(),
+            nn.Conv2d(1024, 1, kernel_size=1, stride=1),
+            nn.Sigmoid()
+        )
+    
+    def forward(self, r4, processed_flow):
+        combined = torch.cat([r4, processed_flow], dim=1)  # Assuming both have same spatial dimensions
+        attention_scores = self.attention_layer(combined)  # [B, 1, H, W]
+        weighted_features = (attention_scores * r4) + ((1 - attention_scores) * processed_flow)
+        return weighted_features
 
 class Flovos(nn.Module):
     """
@@ -429,7 +396,8 @@ class Flovos(nn.Module):
         self.Decoder = Decoder(128)
         self.aspp = ASPP()
 
-        self.flow_process = nn.Conv2d(2, 512, kernel_size=(3, 3), padding=(1, 1), stride=1) 
+        self.flow_processor = FlowProcessor()
+        self.feature_attention = FeatureAttention()
 
     def Pad_memory(self, mems, num_objects, K):
         pad_mems = []
@@ -465,14 +433,6 @@ class Flovos(nn.Module):
         )
 
     def Soft_aggregation(self, ps, K):
-        # stm
-        # num_objects, H, W = ps.shape
-        # em = ToCuda(torch.zeros(1, K, H, W))
-        # em[0, 0] = torch.prod(1 - ps, dim=0)  # bg prob
-        # em[0, 1 : num_objects + 1] = ps  # obj prob
-        # em = torch.clamp(em, 1e-7, 1 - 1e-7)
-        # logit = torch.log((em / (1 - em)))
-
         # Flovos
         num_objects, H, W = ps.shape
         bg_prob = torch.prod(1 - ps, dim=0).unsqueeze(0).unsqueeze(0)  # bg prob
@@ -536,16 +496,17 @@ class Flovos(nn.Module):
         return k4, v4
 
     def segment(self, frame, keys, values, num_objects, flow_frame):
+        # Process RAFT output to match r4 feature map dimensions
+        processed_flow = self.flow_processor(flow_frame)
+
         num_objects = num_objects[0].item()
         # _, keydim, N = keys.shape
         [frame], pad = pad_divide_by([frame], 64, (frame.size()[2], frame.size()[3]))
         r4, r3, r2, c1, _ = self.Encoder(frame)
-        # Process flow_frame to match the dimensions of r4
-        # Assuming flow_frame has been preprocessed to have a batch size of 1 and spatial dimensions that need resizing
-        flow_frame_processed = self.flow_process(flow_frame)  # Process flow_frame to match the channel depth of r4 if not done already
-        flow_frame_resized = F.interpolate(flow_frame_processed, size=(r4.shape[2], r4.shape[3]), mode='bilinear', align_corners=False)
-        # Replicate the processed and resized flow frame to match num_objects
-        flow_frame_expanded = flow_frame_resized.expand(num_objects, -1, -1, -1)
+
+        # Apply attention mechanism to integrate processed_flow with r4
+        r4_enhanced = self.feature_attention(r4, processed_flow)
+        r4 = r4_enhanced
 
         k4, v4 = self.KV_Q_r4(r4)
         k4e, v4e = k4.expand(num_objects, -1, -1, -1), v4.expand(
@@ -554,8 +515,7 @@ class Flovos(nn.Module):
         r3e, r2e = r3.expand(num_objects, -1, -1, -1), r2.expand(
             num_objects, -1, -1, -1
         )
-        # Incorporate the expanded flow features into memory features
-        m4 = self.Memory(keys, values, k4e, v4e, flow_frame_expanded)  # Adjusted to include flow_frame_expanded
+        m4 = self.Memory(keys, values, k4e, v4e)  
         m4 = self.aspp(m4)
         logits = self.Decoder(m4, r3e, r2e)
         ps = F.softmax(logits, dim=1)[:, 1]
