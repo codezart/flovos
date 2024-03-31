@@ -8,11 +8,11 @@
 			"program": "${file}",
 			"console": "integratedTerminal",
 			"args":[
-				"-Ddavis", "~/Downloads/DAVIS/", 
-				"-Dyoutube", "~/Downloads/YOUTUBEVOS/", 
-				"-backbone", "resnet50", 
-				"-save", "./davis_weights/", 
-				"-resume", "~/Downloads/swiftnet_davis_1_04_M_2400000.pth",
+				"-g", "0", 
+				"-y", "17", 
+				"-s", "val", 
+				"-D", "~/Downloads/DAVIS/", 
+				"-modelpth", "~/Downloads/flovos_davis_youtube_m2_attention_resnet50_9999.pth",
 				"-raftmodel", "./raft/models/raft-things.pth",
 				"-mixed_precision"
 			]
