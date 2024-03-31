@@ -212,22 +212,22 @@ class Decoder(nn.Module):
         self.RF3 = Refine(512, mdim)
         self.RF2 = Refine(256, mdim)
 
-        # New module for processing flow features
-        self.flow_process = nn.Conv2d(2, 512, kernel_size=(3, 3), padding=(1, 1), stride=1)  # Adjusted to output 512 channels to match r4's depth
-        # Additional conv layer to process concatenated features
-        self.adjust_channels = nn.Conv2d(1024, 512, kernel_size=(1, 1)).to("cuda")  # Adjusts concatenated features to 512 channels
-        
+        self.feature_attention = FeatureAttention(512)
+        self.flow_process = nn.Conv2d(2, 512, kernel_size=3, stride=1, padding=1)
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((24, 24))
+
         self.pred2 = nn.Conv2d(mdim, 2, kernel_size=(3, 3), padding=(1, 1), stride=1)
 
-    def forward(self, r4, r3, r2):
-        # flow_features_processed = self.flow_process(flow_frame)
-        # flow_features_processed_resized = F.interpolate(flow_features_processed, size=(24, 24), mode='bilinear', align_corners=False)
-        # # Concatenate r4 and resized flow features
-        # r4_with_flow = torch.cat((r4, flow_features_processed_resized), dim=1)
-        # Adjust channels to match the expected input of self.convFM
-        # r4_adjusted = self.adjust_channels(r4)
+    def forward(self, r4, r3, r2, flow_frame ):
+        # Downsample flow_frame to match r4's spatial dimensions
+        flow_frame = self.adaptive_pool(flow_frame)
 
-        m4 = self.ResMM(self.convFM(r4))
+        # Process the flow to have the same dimensions and channel size as r4
+        processed_flow = self.flow_process(flow_frame)
+        # Apply the attention mechanism
+        r4_enhanced = self.feature_attention(r4, processed_flow)
+
+        m4 = self.ResMM(self.convFM(r4_enhanced))
         m3 = self.RF3(r3, m4)
         m2 = self.RF2(r2, m3)
 
@@ -360,20 +360,21 @@ class FlowProcessor(nn.Module):
         return self.conv(flow)
 
 class FeatureAttention(nn.Module):
-    def __init__(self):
+    def __init__(self, channel, reduction=16):
         super(FeatureAttention, self).__init__()
-        self.attention_layer = nn.Sequential(
-            nn.Conv2d(1024 * 2, 1024, kernel_size=1, stride=1),
-            nn.ReLU(),
-            nn.Conv2d(1024, 1, kernel_size=1, stride=1),
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(channel, channel // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(channel // reduction, channel, bias=False),
             nn.Sigmoid()
         )
-    
-    def forward(self, r4, processed_flow):
-        combined = torch.cat([r4, processed_flow], dim=1)  # Assuming both have same spatial dimensions
-        attention_scores = self.attention_layer(combined)  # [B, 1, H, W]
-        weighted_features = (attention_scores * r4) + ((1 - attention_scores) * processed_flow)
-        return weighted_features
+
+    def forward(self, x, flow):
+        b, c, _, _ = x.size()
+        y = self.avg_pool(x).view(b, c)
+        y = self.fc(y).view(b, c, 1, 1)
+        return x + flow * y.expand_as(x)
 
 class Flovos(nn.Module):
     """
@@ -396,8 +397,6 @@ class Flovos(nn.Module):
         self.Decoder = Decoder(128)
         self.aspp = ASPP()
 
-        self.flow_processor = FlowProcessor()
-        self.feature_attention = FeatureAttention()
 
     def Pad_memory(self, mems, num_objects, K):
         pad_mems = []
@@ -496,17 +495,10 @@ class Flovos(nn.Module):
         return k4, v4
 
     def segment(self, frame, keys, values, num_objects, flow_frame):
-        # Process RAFT output to match r4 feature map dimensions
-        processed_flow = self.flow_processor(flow_frame)
-
         num_objects = num_objects[0].item()
         # _, keydim, N = keys.shape
         [frame], pad = pad_divide_by([frame], 64, (frame.size()[2], frame.size()[3]))
         r4, r3, r2, c1, _ = self.Encoder(frame)
-
-        # Apply attention mechanism to integrate processed_flow with r4
-        r4_enhanced = self.feature_attention(r4, processed_flow)
-        r4 = r4_enhanced
 
         k4, v4 = self.KV_Q_r4(r4)
         k4e, v4e = k4.expand(num_objects, -1, -1, -1), v4.expand(
@@ -517,7 +509,7 @@ class Flovos(nn.Module):
         )
         m4 = self.Memory(keys, values, k4e, v4e)  
         m4 = self.aspp(m4)
-        logits = self.Decoder(m4, r3e, r2e)
+        logits = self.Decoder(m4, r3e, r2e, flow_frame)
         ps = F.softmax(logits, dim=1)[:, 1]
         logit = self.Soft_aggregation(ps, 11)
         if pad[2] + pad[3] > 0:
