@@ -48,6 +48,32 @@ from evaldavis2017.davis2017.metrics import db_eval_boundary, db_eval_iou
 # from evaldavis2017.davis2017.results import Results
 # from scipy.optimize import linear_sum_assignment
 
+def flow_wrap(prev_mask, flow):
+    """
+    Wrap the previous mask frame towards the current frame based on optical flow.
+    Args:
+    - prev_mask: the mask of the previous frame (B, C, H, W)
+    - flow: optical flow from previous to current frame (B, 2, H, W)
+    Returns:
+    - wrapped_mask: the wrapped mask (B, C, H, W)
+    """
+    # Use grid_sample for wrapping
+    prev_mask.to("cuda")
+    flow.to("cuda")
+    B, C, H, W = prev_mask.size()
+    grid_y, grid_x = torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij')
+    grid = torch.stack((grid_x, grid_y), 2).float().to("cuda")  # Shape: (H, W, 2)
+    grid = grid.unsqueeze(0).expand(B, -1, -1, -1)  # Shape: (B, H, W, 2)
+    flow = flow.permute(0, 2, 3, 1)  # Shape: (B, H, W, 2)
+    # Normalize grid and flow to [-1, 1] range
+    grid = grid / torch.tensor([W / 2.0 - 0.5, H / 2.0 - 0.5], device="cuda") - 1.0
+    flow = flow / torch.tensor([W / 2.0, H / 2.0], device="cuda")
+    
+    # Apply flow offsets
+    new_grid = grid + flow
+    # Wrap using grid_sample
+    wrapped_mask = F.grid_sample(prev_mask.to("cuda"), new_grid, mode='bilinear', padding_mode='border', align_corners=True)
+    return wrapped_mask
 
 def Run_video(
     dataset,
@@ -94,7 +120,7 @@ def Run_video(
             with torch.no_grad():
                 prev_key, prev_value = model(
                     F_last[:, :, 0],
-                    E_last[:, :, 0],
+                    E_last,
                     r4,
                     r3,
                     r2,
@@ -120,7 +146,7 @@ def Run_video(
 
 
         _, flow_up_0 = raft(Fs0,Fs1, iters=20, test_mode=True)
-
+        
         F_ = F_.unsqueeze(0)
         M_ = M_.unsqueeze(0)
         all_Ms.append(M_.cpu().numpy())
@@ -140,7 +166,10 @@ def Run_video(
                     keys, values, prev_key, prev_value
                 )
         pred[t] = torch.argmax(E[0], dim=0).cpu().numpy().astype(np.uint8)
+
         E_last = E.unsqueeze(2)
+        warped_mask_0 = flow_wrap(E_last[:, :, 0], flow_up_0)
+        E_last = warped_mask_0
         F_last = F_
     Ms = np.concatenate(all_Ms, axis=2)
     return pred, Ms
