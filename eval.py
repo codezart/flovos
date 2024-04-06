@@ -127,7 +127,7 @@ def Run_video(
         # segment
         with torch.no_grad():
             logit, r4, r3, r2, c1 = model(
-                F_[:, :, 0], this_keys, this_values, torch.tensor([num_objects]), flow_up_0
+                F_[:, :, 0], this_keys, this_values, torch.tensor([num_objects])
             )
         E = F.softmax(logit, dim=1)
         del logit
