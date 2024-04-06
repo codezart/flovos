@@ -91,6 +91,83 @@ def load_raft_image(imfile):
     img = torch.from_numpy(img).permute(2, 0, 1).float()
     return img[None].to(DEVICE)
 
+
+# def warp_mask_with_flow(mask, flow):
+#     """
+#     Warps a mask tensor using the given optical flow.
+#     Args:
+#         mask (torch.Tensor): The mask to warp, with shape [B, C, H, W].
+#         flow (torch.Tensor): The optical flow between two frames, with shape [B, 2, H, W].
+#     Returns:
+#         torch.Tensor: The warped mask.
+#     """
+#     # Using grid_sample for warping, flow should be normalized to [-1, 1]
+#     B, _, H, W = mask.size()
+#     grid_y, grid_x = torch.meshgrid(torch.arange(0, H), torch.arange(0, W), indexing='ij')
+#     grid = torch.stack((grid_x, grid_y), 2).float().cuda()
+#     grid = (grid + flow.permute(0, 2, 3, 1)) * 2 / torch.tensor([W - 1, H - 1]).cuda() - 1
+#     grid = grid.permute(0, 3, 1, 2)
+#     warped_mask = F.grid_sample(mask, grid, mode='bilinear', padding_mode='border')
+#     return warped_mask
+
+def warp_mask_with_flow(mask, flow):
+    """
+    Warps a mask tensor using the given optical flow.
+    Args:
+        mask (torch.Tensor): The mask to warp, with shape [B, C, H, W].
+        flow (torch.Tensor): The optical flow between two frames, with shape [B, 2, H, W].
+    Returns:
+        torch.Tensor: The warped mask.
+    """
+    B, _, H, W = mask.size()
+    # Make mesh grid
+    xx = torch.arange(0, W).view(1, -1).repeat(H, 1)
+    yy = torch.arange(0, H).view(-1, 1).repeat(1, W)
+    xx = xx.view(1, 1, H, W).repeat(B, 1, 1, 1)
+    yy = yy.view(1, 1, H, W).repeat(B, 1, 1, 1)
+    grid = torch.cat((xx, yy), 1).float()
+
+    # Normalize grid to be in range [-1, 1] to match the output of F.affine_grid
+    grid[:, 0, :, :] = 2.0 * grid[:, 0, :, :] / (W - 1) - 1.0
+    grid[:, 1, :, :] = 2.0 * grid[:, 1, :, :] / (H - 1) - 1.0
+    grid = grid.permute(0, 2, 3, 1)
+
+    # Ensure grid is on the same device as flow
+    grid = grid.to("cuda")
+
+    # Add the flow to the grid and warp the mask using grid_sample
+    vgrid = grid + flow.permute(0, 2, 3, 1)
+    output = F.grid_sample(mask.to("cuda"), vgrid, mode='bilinear', padding_mode='zeros', align_corners=False)
+
+    return output
+
+def flow_wrap(prev_mask, flow):
+    """
+    Wrap the previous mask frame towards the current frame based on optical flow.
+    Args:
+    - prev_mask: the mask of the previous frame (B, C, H, W)
+    - flow: optical flow from previous to current frame (B, 2, H, W)
+    Returns:
+    - wrapped_mask: the wrapped mask (B, C, H, W)
+    """
+    # Use grid_sample for wrapping
+    prev_mask.to("cuda")
+    flow.to("cuda")
+    B, C, H, W = prev_mask.size()
+    grid_y, grid_x = torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij')
+    grid = torch.stack((grid_x, grid_y), 2).float().to("cuda")  # Shape: (H, W, 2)
+    grid = grid.unsqueeze(0).expand(B, -1, -1, -1)  # Shape: (B, H, W, 2)
+    flow = flow.permute(0, 2, 3, 1)  # Shape: (B, H, W, 2)
+    # Normalize grid and flow to [-1, 1] range
+    grid = grid / torch.tensor([W / 2.0 - 0.5, H / 2.0 - 0.5], device="cuda") - 1.0
+    flow = flow / torch.tensor([W / 2.0, H / 2.0], device="cuda")
+    
+    # Apply flow offsets
+    new_grid = grid + flow
+    # Wrap using grid_sample
+    wrapped_mask = F.grid_sample(prev_mask.to("cuda"), new_grid, mode='bilinear', padding_mode='border', align_corners=True)
+    return wrapped_mask
+
 def adjust_learning_rate(iteration, total_iter, power=0.9):
     return 1e-5 * pow((1 - 1.0 * iteration / total_iter), power)
 
@@ -283,13 +360,17 @@ def main():
         Fs2 = transforms.Resize((384, 384))(raftFs[2,0]).to(DEVICE)
 
         _, flow_up_0 = raft(Fs0,Fs1, iters=20, test_mode=True)
+        warped_mask_0 = flow_wrap(Es[:, :, 0], flow_up_0)
+
         _, flow_up_1 = raft(Fs1,Fs2, iters=20, test_mode=True)
+        warped_mask_1 = flow_wrap(Es[:, :, 1], flow_up_1)
+
         # end RAFT run
 
         # Start training with first frame (memorize module)
         n1_key, n1_value = model(
             Fs[:, :, 0],
-            Es[:, :, 0],
+            warped_mask_0,
             None,
             None,
             None,
@@ -300,7 +381,7 @@ def main():
 
         # apply 2ndframe to model to segment to generate mask for frame 2 (segment)
         n2_logit, r4, r3, r2, c1 = model(
-            Fs[:, :, 1], n1_key, n1_value, torch.tensor([num_objects]), flow_up_0
+            Fs[:, :, 1], n1_key, n1_value, torch.tensor([num_objects])
         )
         n2_label = torch.argmax(Ms[:, :, 1], dim=1).long().cuda()
         n2_loss = criterion(n2_logit, n2_label)
@@ -310,12 +391,12 @@ def main():
         )  # flovos has num objects limited to 3. STM used full 11 objects (10 + 1 background)
 
         # Take second frame output (mask) and second frame to model (memorize)
-        n2_key, n2_value = model(Fs[:, :, 1], Es[:, :, 1], r4, r3, r2, c1, num_objects)
+        n2_key, n2_value = model(Fs[:, :, 1], warped_mask_1, r4, r3, r2, c1, num_objects)
         n12_keys = torch.cat([n1_key, n2_key], dim=2)
         n12_values = torch.cat([n1_value, n2_value], dim=2)
 
         # Apply third frame as input for segment to generate third frame mask output 
-        n3_logit, r4, r3, r2, c1 = model(Fs[:, :, 2], n12_keys, n12_values, num_objects, flow_up_1)
+        n3_logit, r4, r3, r2, c1 = model(Fs[:, :, 2], n12_keys, n12_values, num_objects)
 
         n3_label = torch.argmax(Ms[:, :, 2], dim=1).long().cuda()
         n3_loss = criterion(n3_logit, n3_label)

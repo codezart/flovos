@@ -212,22 +212,11 @@ class Decoder(nn.Module):
         self.RF3 = Refine(512, mdim)
         self.RF2 = Refine(256, mdim)
 
-        self.feature_attention = FeatureAttention(512)
-        self.flow_process = nn.Conv2d(2, 512, kernel_size=3, stride=1, padding=1)
-        self.adaptive_pool = nn.AdaptiveAvgPool2d((24, 24))
-
         self.pred2 = nn.Conv2d(mdim, 2, kernel_size=(3, 3), padding=(1, 1), stride=1)
 
-    def forward(self, r4, r3, r2, flow_frame ):
-        # Downsample flow_frame to match r4's spatial dimensions
-        flow_frame = self.adaptive_pool(flow_frame)
+    def forward(self, r4, r3, r2 ):
 
-        # Process the flow to have the same dimensions and channel size as r4
-        processed_flow = self.flow_process(flow_frame)
-        # Apply the attention mechanism
-        r4_enhanced = self.feature_attention(r4, processed_flow)
-
-        m4 = self.ResMM(self.convFM(r4_enhanced))
+        m4 = self.ResMM(self.convFM(r4))
         m3 = self.RF3(r3, m4)
         m2 = self.RF2(r2, m3)
 
@@ -494,11 +483,19 @@ class Flovos(nn.Module):
 
         return k4, v4
 
-    def segment(self, frame, keys, values, num_objects, flow_frame):
+    def segment(self, frame, keys, values, num_objects):
         num_objects = num_objects[0].item()
         # _, keydim, N = keys.shape
         [frame], pad = pad_divide_by([frame], 64, (frame.size()[2], frame.size()[3]))
         r4, r3, r2, c1, _ = self.Encoder(frame)
+        
+        # # Assuming warped_mask is of shape [B, C, H, W] and needs to be aligned with the spatial dimensions of r4
+        # warped_mask_aligned = F.interpolate(warped_mask, size=(r4.size(2), r4.size(3)), mode='bilinear', align_corners=False)
+        # # Apply a gating mechanism using the warped mask on r4 feature maps
+        # # Assuming the mask has multiple channels (C), reduce it to a single channel by summing or averaging across channels
+        # # This reduction is necessary if you intend to modulate each feature channel of r4 based on the mask
+        # warped_mask_reduced = warped_mask_aligned.sum(dim=1, keepdim=True)
+        # r4_modulated = r4 * warped_mask_reduced
 
         k4, v4 = self.KV_Q_r4(r4)
         k4e, v4e = k4.expand(num_objects, -1, -1, -1), v4.expand(
@@ -509,7 +506,7 @@ class Flovos(nn.Module):
         )
         m4 = self.Memory(keys, values, k4e, v4e)  
         m4 = self.aspp(m4)
-        logits = self.Decoder(m4, r3e, r2e, flow_frame)
+        logits = self.Decoder(m4, r3e, r2e)
         ps = F.softmax(logits, dim=1)[:, 1]
         logit = self.Soft_aggregation(ps, 11)
         if pad[2] + pad[3] > 0:
