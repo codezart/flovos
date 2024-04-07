@@ -238,11 +238,11 @@ def main():
     
     # freeze all except the decoder module of Flovos
     flovos = Flovos()
-    for param in flovos.parameters():
-        param.requires_grad = False
+    # for param in flovos.parameters():
+    #     param.requires_grad = False
     
-    for param in flovos.Decoder.parameters():
-        param.requires_grad = True
+    # for param in flovos.Decoder.parameters():
+    #     param.requires_grad = True
 
     # initialize model with dataparallel for multi gpu processing
     model = nn.DataParallel(flovos)
