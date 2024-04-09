@@ -13,6 +13,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import tqdm
 from PIL import Image
+import matplotlib.pyplot as plt
 from torch.utils import data
 from torchvision import transforms
 
@@ -159,7 +160,8 @@ def flow_wrap(prev_mask, flow):
     grid = grid.unsqueeze(0).expand(B, -1, -1, -1)  # Shape: (B, H, W, 2)
     flow = flow.permute(0, 2, 3, 1)  # Shape: (B, H, W, 2)
     # Normalize grid and flow to [-1, 1] range
-    grid = grid / torch.tensor([W / 2.0 - 0.5, H / 2.0 - 0.5], device="cuda") - 1.0
+    grid = grid / torch.tensor(
+        [W / 2.0 - 0.5, H / 2.0 - 0.5], device="cuda") - 1.0
     flow = flow / torch.tensor([W / 2.0, H / 2.0], device="cuda")
     
     # Apply flow offsets
@@ -167,6 +169,31 @@ def flow_wrap(prev_mask, flow):
     # Wrap using grid_sample
     wrapped_mask = F.grid_sample(prev_mask.to("cuda"), new_grid, mode='bilinear', padding_mode='border', align_corners=True)
     return wrapped_mask
+
+
+def save_warped_mask_visualization(warped_mask, output_dir):
+    """
+    Save the visualization of the warped mask tensor as images.
+    Args:
+        warped_mask (torch.Tensor): The warped mask tensor with shape [B, C, H, W].
+        output_dir (str): Directory to save the visualization images.
+    """
+    # Assuming warped_mask is of shape [B, C, H, W] where B=1, C=11 (11 categories), H=384, W=384
+    # Selecting the first item from the batch dimension
+    warped_mask = warped_mask[0]  # shape [C, H, W]
+
+    # Convert tensor to numpy array
+    warped_mask_np = warped_mask.cpu().detach().numpy()
+
+    # Plot each category mask separately
+    num_categories = warped_mask_np.shape[0]
+    for i in range(num_categories):
+        plt.imshow(warped_mask_np[i], cmap='gray')
+        plt.title(f'Mask Category {i}')
+        plt.axis('off')
+        plt.savefig(os.path.join(output_dir, f'mask_category_{i}.png'))
+        plt.close()
+
 
 def adjust_learning_rate(iteration, total_iter, power=0.9):
     return 1e-5 * pow((1 - 1.0 * iteration / total_iter), power)
@@ -238,11 +265,11 @@ def main():
     
     # freeze all except the decoder module of Flovos
     flovos = Flovos()
-    # for param in flovos.parameters():
-    #     param.requires_grad = False
+    for param in flovos.parameters():
+        param.requires_grad = False
     
-    # for param in flovos.Decoder.parameters():
-    #     param.requires_grad = True
+    for param in flovos.Decoder.parameters():
+        param.requires_grad = True
 
     # initialize model with dataparallel for multi gpu processing
     model = nn.DataParallel(flovos)
@@ -362,6 +389,7 @@ def main():
         _, flow_up_0 = raft(Fs0,Fs1, iters=20, test_mode=True)
         warped_mask_0 = flow_wrap(Es[:, :, 0], flow_up_0)
 
+        save_warped_mask_visualization(Es[:, :, 0],"./images")
         _, flow_up_1 = raft(Fs1,Fs2, iters=20, test_mode=True)
         warped_mask_1 = flow_wrap(Es[:, :, 1], flow_up_1)
 
