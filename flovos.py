@@ -378,8 +378,7 @@ class FeatureAttention(nn.Module):
         # r4: shape(1, 512, 24, 24)
         # flow: shape(1, 512, 24, 24)
 
-        # Extract batch size (b), number of channels c)
-        b, c, _, _ = r4.size()
+        b, c, _, _ = flow.size()
 
         # Apply adaptive average pooling to reduce spatial dimensions of feature map to 1x1 and Reshape to (b, c) for fully connected layers
         pooled_feature_map = self.avg_pool(flow).view(b, c)
