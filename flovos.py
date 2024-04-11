@@ -375,7 +375,8 @@ class FeatureAttention(nn.Module):
         )
 
     def forward(self, r4, flow):
-        # 
+        # r4: shape(1, 512, 24, 24)
+        # flow: shape(1, 512, 24, 24)
 
         # Extract batch size (b), number of channels c)
         b, c, _, _ = r4.size()
