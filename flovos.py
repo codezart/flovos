@@ -362,19 +362,32 @@ class FlowProcessor(nn.Module):
 class FeatureAttention(nn.Module):
     def __init__(self, channel, reduction=16):
         super(FeatureAttention, self).__init__()
+        
+        # Adaptive average pooling layer to reduce spatial dimensions to 1x1
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
+
+        # Fully connected layers to learn attention weights
         self.fc = nn.Sequential(
-            nn.Linear(channel, channel // reduction, bias=False),
-            nn.ReLU(inplace=True),
-            nn.Linear(channel // reduction, channel, bias=False),
-            nn.Sigmoid()
+            nn.Linear(channel, channel // reduction, bias=False), # Reduce dimension
+            nn.ReLU(inplace=True), 
+            nn.Linear(channel // reduction, channel, bias=False), # Restore dimension
+            nn.Sigmoid() # Sigmoid activation for output between 0 and 1
         )
 
-    def forward(self, x, flow):
-        b, c, _, _ = x.size()
-        y = self.avg_pool(x).view(b, c)
-        y = self.fc(y).view(b, c, 1, 1)
-        return x + flow * y.expand_as(x)
+    def forward(self, r4, flow):
+        # 
+
+        # Extract batch size (b), number of channels c)
+        b, c, _, _ = r4.size()
+
+        # Apply adaptive average pooling to reduce spatial dimensions of feature map to 1x1 and Reshape to (b, c) for fully connected layers
+        pooled_feature_map = self.avg_pool(flow).view(b, c)
+
+        # Pass through fully connected layers to compute attention weights
+        attention_weights = self.fc(pooled_feature_map).view(b, c, 1, 1)
+
+        # Apply attention weights
+        return r4 * attention_weights.expand_as(flow)
 
 class Flovos(nn.Module):
     """
