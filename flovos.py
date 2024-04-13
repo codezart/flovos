@@ -211,10 +211,11 @@ class Decoder(nn.Module):
         self.ResMM = ResBlock(mdim, mdim)
         self.RF3 = Refine(512, mdim)
         self.RF2 = Refine(256, mdim)
+        self.RFflow = Refine(512, mdim)
 
         self.feature_attention = FeatureAttention(512)
         self.flow_process = nn.Conv2d(2, 512, kernel_size=3, stride=1, padding=1)
-        self.adaptive_pool = nn.AdaptiveAvgPool2d((24, 24))
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((192, 192))
 
         self.pred2 = nn.Conv2d(mdim, 2, kernel_size=(3, 3), padding=(1, 1), stride=1)
 
@@ -225,15 +226,16 @@ class Decoder(nn.Module):
         # Process the flow to have the same dimensions and channel size as r4
         processed_flow = self.flow_process(flow_frame)
         # Apply the attention mechanism
-        r4_enhanced = self.feature_attention(r4, processed_flow)
+        # r4_enhanced = self.feature_attention(r4, processed_flow)
 
-        m4 = self.ResMM(self.convFM(r4_enhanced))
+        m4 = self.ResMM(self.convFM(r4))
         m3 = self.RF3(r3, m4)
         m2 = self.RF2(r2, m3)
+        mf = self.RFflow(processed_flow, m2)
 
-        p2 = self.pred2(F.relu(m2, inplace=True))
+        p2 = self.pred2(F.relu(mf, inplace=True))
 
-        p = F.interpolate(p2, scale_factor=4, mode="bilinear", align_corners=False)
+        p = F.interpolate(p2, scale_factor=2, mode="bilinear", align_corners=False)
         return p
 
 
