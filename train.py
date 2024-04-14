@@ -395,7 +395,7 @@ def main():
 
         # apply 2ndframe to model to segment to generate mask for frame 2 (segment)
         n2_logit, r4, r3, r2, c1 = model(
-            Fs[:, :, 1], n1_key, n1_value, torch.tensor([num_objects]),  warped_mask_0
+            Fs[:, :, 1], n1_key, n1_value, torch.tensor([num_objects]),  warped_mask_0[:, : num_objects + 1]
         )
         n2_label = torch.argmax(Ms[:, :, 1], dim=1).long().cuda()
         n2_loss = criterion(n2_logit, n2_label)
@@ -410,7 +410,7 @@ def main():
         n12_values = torch.cat([n1_value, n2_value], dim=2)
 
         # Apply third frame as input for segment to generate third frame mask output 
-        n3_logit, r4, r3, r2, c1 = model(Fs[:, :, 2], n12_keys, n12_values, num_objects,  warped_mask_1)
+        n3_logit, r4, r3, r2, c1 = model(Fs[:, :, 2], n12_keys, n12_values, num_objects,  warped_mask_1[:, : num_objects + 1])
 
         n3_label = torch.argmax(Ms[:, :, 2], dim=1).long().cuda()
         n3_loss = criterion(n3_logit, n3_label)
