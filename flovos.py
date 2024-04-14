@@ -212,11 +212,22 @@ class Decoder(nn.Module):
         self.RF3 = Refine(512, mdim)
         self.RF2 = Refine(256, mdim)
 
+        self.feature_attention = FeatureAttention(512)
+        self.flow_process = nn.Conv2d(2, 512, kernel_size=3, stride=1, padding=1)
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((24, 24))
+
         self.pred2 = nn.Conv2d(mdim, 2, kernel_size=(3, 3), padding=(1, 1), stride=1)
 
-    def forward(self, r4, r3, r2 ):
+    def forward(self, r4, r3, r2, flomask_wrap ):
+        # Downsample flow_frame to match r4's spatial dimensions
+        flomask_wrap = self.adaptive_pool(flomask_wrap)
 
-        m4 = self.ResMM(self.convFM(r4))
+        # Process the flow to have the same dimensions and channel size as r4
+        processed_flomask_wrap = self.flow_process(flomask_wrap)
+        # Apply the attention mechanism
+        r4_enhanced = self.feature_attention(r4, processed_flomask_wrap)
+
+        m4 = self.ResMM(self.convFM(r4_enhanced))
         m3 = self.RF3(r3, m4)
         m2 = self.RF2(r2, m3)
 
@@ -351,19 +362,32 @@ class FlowProcessor(nn.Module):
 class FeatureAttention(nn.Module):
     def __init__(self, channel, reduction=16):
         super(FeatureAttention, self).__init__()
+        
+        # Adaptive average pooling layer to reduce spatial dimensions to 1x1
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
+
+        # Fully connected layers to learn attention weights
         self.fc = nn.Sequential(
-            nn.Linear(channel, channel // reduction, bias=False),
-            nn.ReLU(inplace=True),
-            nn.Linear(channel // reduction, channel, bias=False),
-            nn.Sigmoid()
+            nn.Linear(channel, channel // reduction, bias=False), # Reduce dimension
+            nn.ReLU(inplace=True), 
+            nn.Linear(channel // reduction, channel, bias=False), # Restore dimension
+            nn.Sigmoid() # Sigmoid activation for output between 0 and 1
         )
 
-    def forward(self, x, flow):
-        b, c, _, _ = x.size()
-        y = self.avg_pool(x).view(b, c)
-        y = self.fc(y).view(b, c, 1, 1)
-        return x + flow * y.expand_as(x)
+    def forward(self, r4, flow):
+        # r4: shape(1, 512, 24, 24)
+        # flow: shape(1, 512, 24, 24)
+
+        b, c, _, _ = flow.size()
+
+        # Apply adaptive average pooling to reduce spatial dimensions of feature map to 1x1 and Reshape to (b, c) for fully connected layers
+        pooled_feature_map = self.avg_pool(flow).view(b, c)
+
+        # Pass through fully connected layers to compute attention weights
+        attention_weights = self.fc(pooled_feature_map).view(b, c, 1, 1)
+
+        # Apply attention weights
+        return r4 * attention_weights.expand_as(flow)
 
 class Flovos(nn.Module):
     """
@@ -493,7 +517,7 @@ class Flovos(nn.Module):
 
         return k4, v4
 
-    def segment(self, frame, keys, values, num_objects):
+    def segment(self, frame, keys, values, num_objects, wraped_flomask):
         # Convert num_objects tensor to a Python integer for iteration
         num_objects = num_objects[0].item()
         # _, keydim, N = keys.shape
@@ -527,7 +551,7 @@ class Flovos(nn.Module):
         m4 = self.aspp(m4)
         
         # Decode the enhanced feature map to produce segmentation logits
-        logits = self.Decoder(m4, r3e, r2e)
+        logits = self.Decoder(m4, r3e, r2e, wraped_flomask)
         
         # Apply softmax to get probabilities from logits, focusing on the channel representing the object (channel 1)
         ps = F.softmax(logits, dim=1)[:, 1]
