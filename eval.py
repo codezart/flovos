@@ -75,6 +75,36 @@ def flow_wrap(prev_mask, flow):
     wrapped_mask = F.grid_sample(prev_mask.to("cuda"), new_grid, mode='bilinear', padding_mode='border', align_corners=True)
     return wrapped_mask
 
+
+def warp_mask_with_flow(flow, prev_mask):
+    # Ensure flow and prev_mask are on the same device
+    device = flow.device
+
+    B, _, H, W = flow.shape
+    # Generate grid of coordinates in the range [-1, 1]
+    xx = torch.arange(0, W).view(1, -1).repeat(H, 1)
+    yy = torch.arange(0, H).view(-1, 1).repeat(1, W)
+    xx = xx.view(1, 1, H, W).repeat(B, 1, 1, 1)
+    yy = yy.view(1, 1, H, W).repeat(B, 1, 1, 1)
+    grid = torch.cat((xx, yy), 1).float()
+
+    # Normalize grid to [-1, 1] to match the PyTorch grid_sample coordinates system
+    grid[:, 0, :, :] = 2.0 * grid[:, 0, :, :].clone() / max(W - 1, 1) - 1.0
+    grid[:, 1, :, :] = 2.0 * grid[:, 1, :, :].clone() / max(H - 1, 1) - 1.0
+
+    # Add the flow to the grid
+    vgrid = grid.to("cuda") + 2.0 * flow.to("cuda") / torch.tensor([W, H]).view(1, 2, 1, 1).to("cuda")
+
+    # Ensure prev_mask is a floating point tensor (needed for grid_sample)
+    if prev_mask.dtype != torch.float32:
+        prev_mask = prev_mask.float()
+
+    # Warp the image by the flow
+    warped_mask = F.grid_sample(prev_mask.to("cuda"), vgrid.permute(0, 2, 3, 1).to("cuda"), mode='bilinear', padding_mode='zeros', align_corners=False)
+
+    return warped_mask
+
+
 def Run_video(
     dataset,
     video,
@@ -120,7 +150,7 @@ def Run_video(
             with torch.no_grad():
                 prev_key, prev_value = model(
                     F_last[:, :, 0],
-                    E_last,
+                    E_last[:, :, 0],
                     r4,
                     r3,
                     r2,
@@ -147,13 +177,15 @@ def Run_video(
 
         _, flow_up_0 = raft(Fs0,Fs1, iters=20, test_mode=True)
         
+        warped_mask = warp_mask_with_flow(flow_up_0,  E_last[:,:,0])
+
         F_ = F_.unsqueeze(0)
         M_ = M_.unsqueeze(0)
         all_Ms.append(M_.cpu().numpy())
         # segment
         with torch.no_grad():
             logit, r4, r3, r2, c1 = model(
-                F_[:, :, 0], this_keys, this_values, torch.tensor([num_objects])
+                F_[:, :, 0], this_keys, this_values, torch.tensor([num_objects]), warped_mask[:, : num_objects + 1]
             )
         E = F.softmax(logit, dim=1)
         del logit
@@ -168,8 +200,6 @@ def Run_video(
         pred[t] = torch.argmax(E[0], dim=0).cpu().numpy().astype(np.uint8)
 
         E_last = E.unsqueeze(2)
-        warped_mask_0 = flow_wrap(E_last[:, :, 0], flow_up_0)
-        E_last = warped_mask_0
         F_last = F_
     Ms = np.concatenate(all_Ms, axis=2)
     return pred, Ms

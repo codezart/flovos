@@ -213,12 +213,16 @@ class Decoder(nn.Module):
         self.RF2 = Refine(256, mdim)
 
         self.feature_attention = FeatureAttention(512)
-        self.flow_process = nn.Conv2d(2, 512, kernel_size=3, stride=1, padding=1)
+        self.flow_process = None
         self.adaptive_pool = nn.AdaptiveAvgPool2d((24, 24))
 
         self.pred2 = nn.Conv2d(mdim, 2, kernel_size=(3, 3), padding=(1, 1), stride=1)
 
-    def forward(self, r4, r3, r2, flomask_wrap ):
+    def forward(self, r4, r3, r2, flomask_wrap, num_objects ):
+        # Reinitialize flow_process layer dynamically based on num_objects
+        if self.flow_process is None or self.flow_process.out_channels != num_objects + 1:
+            self.flow_process = nn.Conv2d(num_objects + 1, 512, kernel_size=3, stride=1, padding=1).to("cuda")
+
         # Downsample flow_frame to match r4's spatial dimensions
         flomask_wrap = self.adaptive_pool(flomask_wrap)
 
@@ -551,7 +555,7 @@ class Flovos(nn.Module):
         m4 = self.aspp(m4)
         
         # Decode the enhanced feature map to produce segmentation logits
-        logits = self.Decoder(m4, r3e, r2e, wraped_flomask)
+        logits = self.Decoder(m4, r3e, r2e, wraped_flomask, num_objects)
         
         # Apply softmax to get probabilities from logits, focusing on the channel representing the object (channel 1)
         ps = F.softmax(logits, dim=1)[:, 1]
