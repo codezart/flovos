@@ -368,7 +368,7 @@ def main():
         _, flow_up_0 = raft(Fs0,Fs1, iters=20, test_mode=True)
         warped_mask_0 = warp_mask_with_flow( flow_up_0, Es[:, :, 0])
 
-        # save_warped_mask_visualization(Ms[:, :, 0],"./imagesmask")
+        # save_warped_mask_visualization(Ms[:, :, 0],"./imagesframe")
         # save_warped_mask_visualization(Es[:, :, 0],"./imageses")
         # save_warped_mask_visualization(flow_up_0,"./imagesflow")
         # save_warped_mask_visualization(warped_mask_0,"./imageswraped")

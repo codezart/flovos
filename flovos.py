@@ -211,6 +211,7 @@ class Decoder(nn.Module):
         self.ResMM = ResBlock(mdim, mdim)
         self.RF3 = Refine(512, mdim)
         self.RF2 = Refine(256, mdim)
+        self.RFflow = Refine(mdim, mdim,scale_factor=1)
 
         self.feature_attention = FeatureAttention(512)
         self.flow_process = None
@@ -221,7 +222,7 @@ class Decoder(nn.Module):
     def forward(self, r4, r3, r2, flomask_wrap, num_objects ):
         # Reinitialize flow_process layer dynamically based on num_objects
         if self.flow_process is None or self.flow_process.out_channels != num_objects + 1:
-            self.flow_process = nn.Conv2d(num_objects + 1, 512, kernel_size=3, stride=1, padding=1).to("cuda")
+            self.flow_process = nn.Conv2d(num_objects + 1, 128, kernel_size=3, stride=1, padding=1).to("cuda")
 
         # Downsample flow_frame to match r4's spatial dimensions
         flomask_wrap = self.adaptive_pool(flomask_wrap)
@@ -229,10 +230,11 @@ class Decoder(nn.Module):
         # Process the flow to have the same dimensions and channel size as r4
         processed_flomask_wrap = self.flow_process(flomask_wrap)
         # Apply the attention mechanism
-        r4_enhanced = self.feature_attention(r4, processed_flomask_wrap)
+        # r4_enhanced = self.feature_attention(r4, processed_flomask_wrap)
 
-        m4 = self.ResMM(self.convFM(r4_enhanced))
-        m3 = self.RF3(r3, m4)
+        m4 = self.ResMM(self.convFM(r4))
+        mf = self.RFflow(processed_flomask_wrap, m4)
+        m3 = self.RF3(r3, mf)
         m2 = self.RF2(r2, m3)
 
         p2 = self.pred2(F.relu(m2, inplace=True))
