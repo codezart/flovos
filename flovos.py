@@ -212,7 +212,7 @@ class Decoder(nn.Module):
         self.RF3 = Refine(512, mdim)
         self.RF2 = Refine(256, mdim)
 
-        self.feature_attention = FeatureAttention(512)
+        self.feature_attention = SpatialAttention()
         self.flow_process = nn.Conv2d(2, 512, kernel_size=3, stride=1, padding=1)
         self.adaptive_pool = nn.AdaptiveAvgPool2d((24, 24))
 
@@ -358,6 +358,25 @@ class FlowProcessor(nn.Module):
     
     def forward(self, flow):
         return self.conv(flow)
+
+class SpatialAttention(nn.Module):
+    def __init__(self):
+        super(SpatialAttention, self).__init__()
+        
+        # Convolutional layers to generate a spatial attention map
+        self.conv1 = nn.Conv2d(512, 64, kernel_size=3, padding=1)  # Reduce channel dimensions
+        self.conv2 = nn.Conv2d(64, 1, kernel_size=3, padding=1)  # Reduce to one channel
+        
+        # Activation functions
+        self.relu = nn.ReLU(inplace=True)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, r4, flow):
+        x = self.relu(self.conv1(flow))
+        spatial_attention_map = self.sigmoid(self.conv2(x))
+
+        expanded_attention_map = spatial_attention_map.expand_as(r4)
+        return r4 * expanded_attention_map
 
 class FeatureAttention(nn.Module):
     def __init__(self, channel, reduction=16):
