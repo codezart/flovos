@@ -212,24 +212,14 @@ class Decoder(nn.Module):
         self.RF3 = Refine(512, mdim)
         self.RF2 = Refine(256, mdim)
 
-        self.feature_attention = FeatureAttention(512)
-        self.flow_process = None
-        self.adaptive_pool = nn.AdaptiveAvgPool2d((24, 24))
+        self.feature_attention = SpatialAttention()
 
         self.pred2 = nn.Conv2d(mdim, 2, kernel_size=(3, 3), padding=(1, 1), stride=1)
 
     def forward(self, r4, r3, r2, flomask_wrap, num_objects ):
-        # Reinitialize flow_process layer dynamically based on num_objects
-        if self.flow_process is None or self.flow_process.out_channels != num_objects + 1:
-            self.flow_process = nn.Conv2d(num_objects + 1, 512, kernel_size=3, stride=1, padding=1).to("cuda")
-
-        # Downsample flow_frame to match r4's spatial dimensions
-        flomask_wrap = self.adaptive_pool(flomask_wrap)
-
-        # Process the flow to have the same dimensions and channel size as r4
-        processed_flomask_wrap = self.flow_process(flomask_wrap)
+        
         # Apply the attention mechanism
-        r4_enhanced = self.feature_attention(r4, processed_flomask_wrap)
+        r4_enhanced = self.feature_attention(r4, flomask_wrap, num_objects)
 
         m4 = self.ResMM(self.convFM(r4_enhanced))
         m3 = self.RF3(r3, m4)
@@ -362,6 +352,33 @@ class FlowProcessor(nn.Module):
     
     def forward(self, flow):
         return self.conv(flow)
+
+class SpatialAttention(nn.Module):
+    def __init__(self):
+        super(SpatialAttention, self).__init__()
+        
+        # Convolutional layers to generate a spatial attention map
+        self.conv1 = None
+        self.conv2 = nn.Conv2d(64, 1, kernel_size=3, padding=1)  # Reduce to one channel
+        
+        # Activation functions
+        self.relu = nn.ReLU(inplace=True)
+        self.sigmoid = nn.Sigmoid()
+
+        self.avg_pool_flow = nn.AdaptiveAvgPool2d((24,24))
+
+    def forward(self, r4, flow, num_objects):
+        # flow: 1, 2, 384, 384
+        # r4: 1, 512, 24, 24
+        if self.conv1 is None or self.conv1.out_channels != num_objects + 1:
+            self.conv1 = nn.Conv2d(num_objects + 1, 64, kernel_size=3, stride=1, padding=1).to("cuda")
+
+        flow = self.avg_pool_flow(flow)
+        # get HxW attention map and apply attention to feature map
+        x = self.relu(self.conv1(flow))
+        spatial_attention_map = self.sigmoid(self.conv2(x))
+        expanded_attention_map = spatial_attention_map.expand_as(r4)
+        return r4 * expanded_attention_map
 
 class FeatureAttention(nn.Module):
     def __init__(self, channel, reduction=16):
