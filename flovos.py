@@ -360,7 +360,7 @@ class SpatialAttention(nn.Module):
         
         # Convolutional layers to generate a spatial attention map
         self.conv1 = nn.Conv2d(2, 64, kernel_size=3, padding=1)  # Reduce channel dimensions
-        self.conv2 = nn.Conv2d(64, 1, kernel_size=3, padding=1)  # Reduce to one channel
+        self.conv2 = nn.Conv2d(64, 1, kernel_size=7, padding=3)  # Reduce to one channel
         
         # Activation functions
         self.relu = nn.ReLU(inplace=True)
