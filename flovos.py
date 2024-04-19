@@ -212,20 +212,15 @@ class Decoder(nn.Module):
         self.RF3 = Refine(512, mdim)
         self.RF2 = Refine(256, mdim)
 
-        self.feature_attention = FeatureAttention(512)
+        self.feature_attention = SpatialAttention()
         self.flow_process = nn.Conv2d(2, 512, kernel_size=3, stride=1, padding=1)
         self.adaptive_pool = nn.AdaptiveAvgPool2d((24, 24))
 
         self.pred2 = nn.Conv2d(mdim, 2, kernel_size=(3, 3), padding=(1, 1), stride=1)
 
     def forward(self, r4, r3, r2, flow_frame ):
-        # Downsample flow_frame to match r4's spatial dimensions
-        flow_frame = self.adaptive_pool(flow_frame)
-
-        # Process the flow to have the same dimensions and channel size as r4
-        processed_flow = self.flow_process(flow_frame)
         # Apply the attention mechanism
-        r4_enhanced = self.feature_attention(r4, processed_flow)
+        r4_enhanced = self.feature_attention(r4, flow_frame)
 
         m4 = self.ResMM(self.convFM(r4_enhanced))
         m3 = self.RF3(r3, m4)
@@ -359,22 +354,60 @@ class FlowProcessor(nn.Module):
     def forward(self, flow):
         return self.conv(flow)
 
+class SpatialAttention(nn.Module):
+    def __init__(self):
+        super(SpatialAttention, self).__init__()
+        
+        # Convolutional layers to generate a spatial attention map
+        self.conv1 = nn.Conv2d(2, 64, kernel_size=3, padding=1)  # Reduce channel dimensions
+        self.conv2 = nn.Conv2d(64, 1, kernel_size=3, padding=1)  # Reduce to one channel
+        
+        # Activation functions
+        self.relu = nn.ReLU(inplace=True)
+        self.sigmoid = nn.Sigmoid()
+
+        self.avg_pool_flow = nn.AdaptiveAvgPool2d((24,24))
+
+    def forward(self, r4, flow):
+        # flow: 1, 2, 384, 384
+        # r4: 1, 512, 24, 24
+
+        flow = self.avg_pool_flow(flow)
+        # get HxW attention map and apply attention to feature map
+        x = self.relu(self.conv1(flow))
+        spatial_attention_map = self.sigmoid(self.conv2(x))
+        expanded_attention_map = spatial_attention_map.expand_as(r4)
+        return r4 * expanded_attention_map
+
 class FeatureAttention(nn.Module):
     def __init__(self, channel, reduction=16):
         super(FeatureAttention, self).__init__()
+        
+        # Adaptive average pooling layer to reduce spatial dimensions to 1x1
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
+
+        # Fully connected layers to learn attention weights
         self.fc = nn.Sequential(
-            nn.Linear(channel, channel // reduction, bias=False),
-            nn.ReLU(inplace=True),
-            nn.Linear(channel // reduction, channel, bias=False),
-            nn.Sigmoid()
+            nn.Linear(channel, channel // reduction, bias=False), # Reduce dimension
+            nn.ReLU(inplace=True), 
+            nn.Linear(channel // reduction, channel, bias=False), # Restore dimension
+            nn.Sigmoid() # Sigmoid activation for output between 0 and 1
         )
 
-    def forward(self, x, flow):
-        b, c, _, _ = x.size()
-        y = self.avg_pool(x).view(b, c)
-        y = self.fc(y).view(b, c, 1, 1)
-        return x + flow * y.expand_as(x)
+    def forward(self, r4, flow):
+        # r4: shape(1, 512, 24, 24)
+        # flow: shape(1, 512, 24, 24)
+
+        b, c, _, _ = flow.size()
+
+        # Apply adaptive average pooling to reduce spatial dimensions of feature map to 1x1 and Reshape to (b, c) for fully connected layers
+        pooled_feature_map = self.avg_pool(flow).view(b, c)
+
+        # Pass through fully connected layers to compute attention weights
+        attention_weights = self.fc(pooled_feature_map).view(b, c, 1, 1)
+
+        # Apply attention weights
+        return r4 * attention_weights.expand_as(flow)
 
 class Flovos(nn.Module):
     """
@@ -443,28 +476,37 @@ class Flovos(nn.Module):
     def memorize(
         self, frame, masks, r4, r3, r2, c1, num_objects, first_frame_flag=False
     ):
+
+        # Convert num_objects tensor to a Python integer for iteration
         num_objects = num_objects[0].item()
         _, K, H, W = masks.shape
 
+        # Ensure the dimensions of the frame and masks are divisible by 64 for processing,
+        # padding them if necessary. This function also returns the padding applied.
         (frame, masks), pad = pad_divide_by(
             [frame, masks], 64, (frame.size()[2], frame.size()[3])
         )
 
+        # Initialize lists to store processed frames, masks, and object-wise background masks
         B_list = {"f": [], "m": [], "o": []}
         for o in range(1, num_objects + 1):
-            B_list["f"].append(frame)
-            B_list["m"].append(masks[:, o])
+            B_list["f"].append(frame) # Append the current frame for each object
+            B_list["m"].append(masks[:, o]) # Append the mask for the current object
+
+            # Calculate the background mask by combining masks of all other objects
             B_list["o"].append(
                 (
-                    torch.sum(masks[:, 1:o], dim=1)
-                    + torch.sum(masks[:, o + 1 : num_objects + 1], dim=1)
-                ).clamp(0, 1)
+                    torch.sum(masks[:, 1:o], dim=1) # Sum masks before the current object
+                    + torch.sum(masks[:, o + 1 : num_objects + 1], dim=1) # Sum masks after the current object
+                ).clamp(0, 1) # Clamp values to be between 0 and 1 inclusively
             )
-
+        
+        # Concatenate the lists for frames, masks, and backgrounds along the batch dimension.
         B_ = {}
         for arg in B_list.keys():
             B_[arg] = torch.cat(B_list[arg], dim=0)
 
+        # If processing the first frame, get the r4, r3,r2,c1 layer values
         if first_frame_flag == True:
             logging.info("First frame flag is set to True")
             r4, r3, r2, c1, _ = self.Encoder(B_["f"])  # r4, r3, r2, c1, f
@@ -473,15 +515,19 @@ class Flovos(nn.Module):
                     r4.size(), r3.size(), r2.size(), c1.size()
                 )
             )
-
+        
+        # Process the outputs of the encoder through the LAE module
         logging.info("Entering LAE ")
         r4, _, _, _, _ = self.LAE(r4, r3, r2, c1, B_["m"], B_["o"])
         logging.info("LAE out r4: \nshape: {}".format(r4.size()))
 
+        # Compute key and value pairs for memory using the KV_M_r4 Key value module
         k4, v4 = self.KV_M_r4(r4)
         logging.info(
             "KVMr4 k4: \nshape: {}\nv4: \nshape: {}".format(k4.size(), v4.size())
         )
+
+        # Reshape key value pairs for each object
         k4 = k4.unsqueeze(0).unsqueeze(3)
         v4 = v4.unsqueeze(0).unsqueeze(3)
         k4 = k4.reshape(num_objects, 32, -1)
@@ -495,27 +541,54 @@ class Flovos(nn.Module):
         return k4, v4
 
     def segment(self, frame, keys, values, num_objects, flow_frame):
+        # Convert num_objects tensor to a Python integer for iteration
         num_objects = num_objects[0].item()
         # _, keydim, N = keys.shape
+
+        # Ensure the dimensions of the frame and masks are divisible by 64 for processing,
+        # padding them if necessary. This function also returns the padding applied.
         [frame], pad = pad_divide_by([frame], 64, (frame.size()[2], frame.size()[3]))
+
+        # Pass the frame through the Encoder to get feature maps at various resolutions (r4, r3, r2) and the initial conv layer (c1).
         r4, r3, r2, c1, _ = self.Encoder(frame)
 
+        # Compute key and value pairs for the current frame using the KV_Q_r4 module designed for query frames.
         k4, v4 = self.KV_Q_r4(r4)
+
+        # Expand the key and value tensors to match the number of objects.
+        # This step essentially duplicates the key and value information for each object to facilitate parallel processing.
         k4e, v4e = k4.expand(num_objects, -1, -1, -1), v4.expand(
             num_objects, -1, -1, -1
         )
+
+        # Like above, expand the encoder feature maps r3 and r2 for each object.
         r3e, r2e = r3.expand(num_objects, -1, -1, -1), r2.expand(
             num_objects, -1, -1, -1
         )
+
+        # Pass the keys and values (from both memory and current frame) through the Memory module.
+        # This operation combines the current frame's information with historical data stored in memory.
         m4 = self.Memory(keys, values, k4e, v4e)  
+
+        # Enhance the feature map using Atrous Spatial Pyramid Pooling (ASPP) for capturing multi-scale information
         m4 = self.aspp(m4)
+
+        # Decode the enhanced feature map to produce segmentation logits
         logits = self.Decoder(m4, r3e, r2e, flow_frame)
+
+        # Apply softmax to get probabilities from logits, focusing on the channel representing the object (channel 1)
         ps = F.softmax(logits, dim=1)[:, 1]
+
+        # Aggregate the probabilities for all objects to get the final segmentation map
         logit = self.Soft_aggregation(ps, 11)
+
+        # If padding was applied, adjust the segmentation maps to match the original frame size
         if pad[2] + pad[3] > 0:
             logit = logit[:, :, pad[2] : -pad[3], :]
         if pad[0] + pad[1] > 0:
             logit = logit[:, :, :, pad[0] : -pad[1]]
+
+        # Return the final segmentation map along with feature maps from the Encoder
         return logit, r4, r3, r2, c1
 
     def forward(self, *args, **kwargs):
