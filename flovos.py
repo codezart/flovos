@@ -197,40 +197,6 @@ class Refine(nn.Module):
         return m
 
 
-class Decoder(nn.Module):
-    """
-    Decodes the feature maps from the Encoder and the refined features
-    from the Refine module to produce the final segmentation mask.
-    It includes convolutional layers and a final prediction layer
-    that outputs the segmentation logits, which are then upscaled to the original resolution.
-    """
-
-    def __init__(self, mdim):
-        super(Decoder, self).__init__()
-        self.convFM = nn.Conv2d(512, mdim, kernel_size=(3, 3), padding=(1, 1), stride=1)
-        self.ResMM = ResBlock(mdim, mdim)
-        self.RF3 = Refine(512, mdim)
-        self.RF2 = Refine(256, mdim)
-
-        self.feature_attention = SpatialAttention()
-        self.flow_process = nn.Conv2d(2, 512, kernel_size=3, stride=1, padding=1)
-        self.adaptive_pool = nn.AdaptiveAvgPool2d((24, 24))
-
-        self.pred2 = nn.Conv2d(mdim, 2, kernel_size=(3, 3), padding=(1, 1), stride=1)
-
-    def forward(self, r4, r3, r2, flow_frame ):
-        # Apply the attention mechanism
-        r4_enhanced = self.feature_attention(r4, flow_frame)
-
-        m4 = self.ResMM(self.convFM(r4_enhanced))
-        m3 = self.RF3(r3, m4)
-        m2 = self.RF2(r2, m3)
-
-        p2 = self.pred2(F.relu(m2, inplace=True))
-
-        p = F.interpolate(p2, scale_factor=4, mode="bilinear", align_corners=False)
-        return p
-
 
 class Memory(nn.Module):
     """
@@ -354,31 +320,6 @@ class FlowProcessor(nn.Module):
     def forward(self, flow):
         return self.conv(flow)
 
-class SpatialAttention(nn.Module):
-    def __init__(self):
-        super(SpatialAttention, self).__init__()
-        
-        # Convolutional layers to generate a spatial attention map
-        self.conv1 = nn.Conv2d(2, 64, kernel_size=3, padding=1)  # Reduce channel dimensions
-        self.conv2 = nn.Conv2d(64, 1, kernel_size=3, padding=1)  # Reduce to one channel
-        
-        # Activation functions
-        self.relu = nn.ReLU(inplace=True)
-        self.sigmoid = nn.Sigmoid()
-
-        self.avg_pool_flow = nn.AdaptiveAvgPool2d((24,24))
-
-    def forward(self, r4, flow):
-        # flow: 1, 2, 384, 384
-        # r4: 1, 512, 24, 24
-
-        flow = self.avg_pool_flow(flow)
-        # get HxW attention map and apply attention to feature map
-        x = self.relu(self.conv1(flow))
-        spatial_attention_map = self.sigmoid(self.conv2(x))
-        expanded_attention_map = spatial_attention_map.expand_as(r4)
-        return r4 * expanded_attention_map
-
 class FeatureAttention(nn.Module):
     def __init__(self, channel, reduction=16):
         super(FeatureAttention, self).__init__()
@@ -408,6 +349,80 @@ class FeatureAttention(nn.Module):
 
         # Apply attention weights
         return r4 * attention_weights.expand_as(flow)
+
+
+class DirectionalAttention(nn.Module):
+    def __init__(self, in_channels, out_channels) -> None:
+        super(DirectionalAttention, self).__init__()
+
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, flow):
+        return self.sigmoid(self.conv(flow))
+    
+class SpatialAttention(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(SpatialAttention, self).__init__()
+        
+        # Convolutional layers to generate a spatial attention map
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)  
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)  
+        
+        self.directional_attention = DirectionalAttention(in_channels, 1)
+
+        # Activation functions
+        self.relu = nn.ReLU(inplace=True)
+        self.sigmoid = nn.Sigmoid()
+        self.downsample = nn.AdaptiveAvgPool2d((24, 24))
+
+
+    def forward(self, r4, flow):
+        # flow: 1, 2, 384, 384
+        # r4: 1, 512, 24, 24
+
+        attention_map = self.directional_attention(flow)
+
+        flow_attention = flow * attention_map
+
+        encoded_flow = self.conv2(self.relu(self.conv1(flow_attention)))
+
+        return r4 * self.downsample(encoded_flow)
+class Decoder(nn.Module):
+    """
+    Decodes the feature maps from the Encoder and the refined features
+    from the Refine module to produce the final segmentation mask.
+    It includes convolutional layers and a final prediction layer
+    that outputs the segmentation logits, which are then upscaled to the original resolution.
+    """
+
+    def __init__(self, mdim):
+        super(Decoder, self).__init__()
+        self.convFM = nn.Conv2d(512, mdim, kernel_size=(3, 3), padding=(1, 1), stride=1)
+        self.ResMM = ResBlock(mdim, mdim)
+        self.RF3 = Refine(512, mdim)
+        self.RF2 = Refine(256, mdim)
+
+        self.spatial_attention = SpatialAttention(2,512)
+
+        self.pred2 = nn.Conv2d(mdim, 2, kernel_size=(3, 3), padding=(1, 1), stride=1)
+
+    def forward(self, r4, r3, r2, flow_feature, num_objects=None):
+        # Apply the attention mechanism
+        if num_objects:
+            r4 = self.spatial_attention(r4, flow_feature, num_objects=num_objects)
+        else:
+            r4 = self.spatial_attention(r4, flow_feature)
+
+        m4 = self.ResMM(self.convFM(r4))
+        m3 = self.RF3(r3, m4)
+        m2 = self.RF2(r2, m3)
+
+        p2 = self.pred2(F.relu(m2, inplace=True))
+
+        p = F.interpolate(p2, scale_factor=4, mode="bilinear", align_corners=False)
+        return p
+
 
 class Flovos(nn.Module):
     """
