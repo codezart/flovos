@@ -212,7 +212,7 @@ class Decoder(nn.Module):
         self.RF3 = Refine(512, mdim)
         self.RF2 = Refine(256, mdim)
 
-        self.feature_attention = SpatialAttention()
+        self.feature_attention = Attention()
         self.flow_process = nn.Conv2d(2, 512, kernel_size=3, stride=1, padding=1)
         self.adaptive_pool = nn.AdaptiveAvgPool2d((24, 24))
 
@@ -354,9 +354,9 @@ class FlowProcessor(nn.Module):
     def forward(self, flow):
         return self.conv(flow)
 
-class SpatialAttention(nn.Module):
+class Attention(nn.Module):
     def __init__(self):
-        super(SpatialAttention, self).__init__()
+        super(Attention, self).__init__()
         
         # Convolutional layers to generate a spatial attention map
         self.conv1 = nn.Conv2d(2, 64, kernel_size=3, padding=1)  # Reduce channel dimensions
@@ -366,18 +366,34 @@ class SpatialAttention(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.sigmoid = nn.Sigmoid()
 
-        self.avg_pool_flow = nn.AdaptiveAvgPool2d((24,24))
+        self.avg_pool_flow = None
 
-    def forward(self, r4, flow):
+
+        # Channel attention layers
+        self.avg_pool_1 = nn.AdaptiveAvgPool2d(1)
+        self.conv1_channel = nn.Conv2d(2, 32, kernel_size=1)  
+        self.conv2_channel = nn.Conv2d(32, 512, kernel_size=1) 
+
+    def forward(self, feature, flow):
         # flow: 1, 2, 384, 384
         # r4: 1, 512, 24, 24
-
+        self.avg_pool_flow = nn.AdaptiveAvgPool2d((feature.shape[2],feature.shape[2]))
         flow = self.avg_pool_flow(flow)
+
+        # channel attention
+        channel_attention = self.avg_pool_1(flow)
+        channel_attention = self.conv1_channel(channel_attention)
+        channel_attention = self.relu(channel_attention)
+        channel_attention = self.conv2_channel(channel_attention)
+        channel_attention = self.sigmoid(channel_attention)
+        feature_channel_updated = feature * channel_attention
+
+        # spatial attention
         # get HxW attention map and apply attention to feature map
         x = self.relu(self.conv1(flow))
         spatial_attention_map = self.sigmoid(self.conv2(x))
-        expanded_attention_map = spatial_attention_map.expand_as(r4)
-        return r4 * expanded_attention_map
+        expanded_attention_map = spatial_attention_map.expand_as(feature)
+        return feature_channel_updated * expanded_attention_map
 
 class FeatureAttention(nn.Module):
     def __init__(self, channel, reduction=16):
