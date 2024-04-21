@@ -209,7 +209,7 @@ def main():
 
     # set optimizer
     optimizer = torch.optim.Adam(
-        model.parameters(), lr=1e-5, eps=1e-8, betas=[0.9, 0.999]
+        model.parameters(), lr=1e-10, eps=1e-8, betas=[0.9, 0.999]
     )
     loss_momentum = 0
     max_skip = 25
