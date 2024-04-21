@@ -219,14 +219,10 @@ class Decoder(nn.Module):
         self.pred2 = nn.Conv2d(mdim, 2, kernel_size=(3, 3), padding=(1, 1), stride=1)
 
     def forward(self, r4, r3, r2, flow_frame ):
-        # Apply the attention mechanism
-        r4_enhanced = self.feature_attention(r4, flow_frame)
-        r3_enhanced = self.feature_attention(r3, flow_frame)
-        r2_enhanced = self.feature_attention(r2, flow_frame)
 
-        m4 = self.ResMM(self.convFM(r4_enhanced))
-        m3 = self.RF3(r3_enhanced, m4)
-        m2 = self.RF2(r2_enhanced, m3)
+        m4 = self.ResMM(self.convFM(r4))
+        m3 = self.RF3(r3, m4)
+        m2 = self.RF2(r2, m3)
 
         p2 = self.pred2(F.relu(m2, inplace=True))
 
