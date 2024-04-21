@@ -224,6 +224,7 @@ def main():
             lr = adjust_learning_rate(iter_, total_iter)
             for param_group in optimizer.param_groups:
                 param_group["lr"] = lr
+                print("New learning rate:", lr)
 
         # change skip
         if (iter_ + 1) % change_skip_step == 0:
