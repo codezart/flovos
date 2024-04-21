@@ -221,10 +221,12 @@ class Decoder(nn.Module):
     def forward(self, r4, r3, r2, flow_frame ):
         # Apply the attention mechanism
         r4_enhanced = self.feature_attention(r4, flow_frame)
+        r3_enhanced = self.feature_attention(r3, flow_frame)
+        r2_enhanced = self.feature_attention(r2, flow_frame)
 
         m4 = self.ResMM(self.convFM(r4_enhanced))
-        m3 = self.RF3(r3, m4)
-        m2 = self.RF2(r2, m3)
+        m3 = self.RF3(r3_enhanced, m4)
+        m2 = self.RF2(r2_enhanced, m3)
 
         p2 = self.pred2(F.relu(m2, inplace=True))
 
@@ -366,18 +368,18 @@ class SpatialAttention(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.sigmoid = nn.Sigmoid()
 
-        self.avg_pool_flow = nn.AdaptiveAvgPool2d((24,24))
+        self.avg_pool_flow = None
 
-    def forward(self, r4, flow):
+    def forward(self, feature, flow):
         # flow: 1, 2, 384, 384
         # r4: 1, 512, 24, 24
-
+        self.avg_pool_flow = nn.AdaptiveAvgPool2d((feature.shape[2],feature.shape[3]))
         flow = self.avg_pool_flow(flow)
         # get HxW attention map and apply attention to feature map
         x = self.relu(self.conv1(flow))
         spatial_attention_map = self.sigmoid(self.conv2(x))
-        expanded_attention_map = spatial_attention_map.expand_as(r4)
-        return r4 * expanded_attention_map
+        expanded_attention_map = spatial_attention_map.expand_as(feature)
+        return feature * expanded_attention_map
 
 class FeatureAttention(nn.Module):
     def __init__(self, channel, reduction=16):
