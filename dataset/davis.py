@@ -152,7 +152,7 @@ class DAVIS_MO_Train(data.Dataset):
                 tmp_mask = 255
 
             frames_.append(tmp_frame.astype(np.float32))
-            raft_frames_.append(tmp_raft_frame.astype(np.float32)) #raft
+            raft_frames_.append(tmp_raft_frame) #raft
             masks_.append(tmp_mask)
         frames_, masks_ = self.aug(frames_, masks_)
 
