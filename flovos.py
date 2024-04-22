@@ -215,7 +215,7 @@ class Decoder(nn.Module):
 
         self.feature_attention = FeatureAttention(512)
         self.flow_process = None
-        self.adaptive_pool = nn.AdaptiveAvgPool2d((24, 24))
+        self.adaptive_pool = None
 
         self.pred2 = nn.Conv2d(mdim, 2, kernel_size=(3, 3), padding=(1, 1), stride=1)
 
@@ -225,6 +225,7 @@ class Decoder(nn.Module):
             self.flow_process = nn.Conv2d(num_objects + 1, 128, kernel_size=3, stride=1, padding=1).to("cuda")
 
         # Downsample flow_frame to match r4's spatial dimensions
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((r4.shape[2], r4.shape[3]))
         flomask_wrap = self.adaptive_pool(flomask_wrap)
 
         # Process the flow to have the same dimensions and channel size as r4
