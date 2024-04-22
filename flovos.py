@@ -215,11 +215,12 @@ class Decoder(nn.Module):
 
         self.feature_attention = FeatureAttention(512)
         self.flow_process = nn.Conv2d(2, 128, kernel_size=3, stride=1, padding=1)
-        self.adaptive_pool = nn.AdaptiveAvgPool2d((24, 24))
-
+        self.adaptive_pool = None
         self.pred2 = nn.Conv2d(mdim, 2, kernel_size=(3, 3), padding=(1, 1), stride=1)
 
     def forward(self, r4, r3, r2, flow_frame ):
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((r4.shape[2], r4.shape[3]))
+
         # Downsample flow_frame to match r4's spatial dimensions
         flow_frame = self.adaptive_pool(flow_frame)
 
