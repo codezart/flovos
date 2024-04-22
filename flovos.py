@@ -365,14 +365,14 @@ class SpatialAttention(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.sigmoid = nn.Sigmoid()
 
-        self.avg_pool_flow = nn.AdaptiveAvgPool2d((24,24))
+        self.avg_pool_flow = None
 
     def forward(self, r4, flow, num_objects):
         # flow: 1, 2, 384, 384
         # r4: 1, 512, 24, 24
         if self.conv1 is None or self.conv1.out_channels != num_objects + 1:
             self.conv1 = nn.Conv2d(num_objects + 1, 64, kernel_size=3, stride=1, padding=1).to("cuda")
-
+        self.avg_pool_flow = nn.AdaptiveAvgPool2d((r4.shape[2],r4.shape[3]))
         flow = self.avg_pool_flow(flow)
         # get HxW attention map and apply attention to feature map
         x = self.relu(self.conv1(flow))

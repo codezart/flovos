@@ -323,7 +323,7 @@ class DAVIS_MO_Test(data.Dataset):
         else:
             Ms = torch.from_numpy(self.All_to_onehot(N_masks).copy()).float()
             num_objects = torch.LongTensor([int(self.num_objects[video])])
-            return transforms.Resize((384, 384))(Fs), transforms.Resize((384, 384))(Ms), transforms.Resize((384, 384))(raftFs)
+            return Fs, Ms, raftFs #transforms.Resize((384, 384))(Fs), transforms.Resize((384, 384))(Ms), transforms.Resize((384, 384))(raftFs)
 
 
 if __name__ == "__main__":
